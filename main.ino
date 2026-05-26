@@ -13,8 +13,8 @@
 #define BUZZ_PIN  D8
 
 // ===================== Konfigurasi WiFi =====================
-#define WIFI_SSID     "SSID WIFIMU"
-#define WIFI_PASSWORD "PASS WIFIMU"
+#define WIFI_SSID     "vivo Y28"
+#define WIFI_PASSWORD "justChill"
 
 // ===================== URL Google Sheets =====================
 String sheet_url = "https://script.google.com/macros/s/AKfycbxEM4eBS8H7MFzBTjxN2KICNB9qltNQzvQMWYjs_20R3sH0ztFR4wfoBy9seIjLEvBQ/exec";
@@ -49,12 +49,24 @@ String urlEncode(String str) {
   return encoded;
 }
 
+// ===================== Cek Apakah Respons Gagal =====================
+bool isResponseError(String result) {
+  return result == "WiFi Gagal!"    ||
+         result == "Akses Ditolak!" ||
+         result == "Kirim Gagal!"   ||
+         result.startsWith("HTTP:");
+}
+
 // ===================== Fungsi Kirim ke Google Sheets =====================
 String sendToSheet(String name, String uid) {
+  // ✅ Cek WiFi — langsung return "WiFi Gagal!" jika tidak terhubung
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
     delay(3000);
-    if (WiFi.status() != WL_CONNECTED) return "WiFi Gagal!";
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("ERROR: WiFi tidak terhubung");
+      return "WiFi Gagal!";  
+    }
   }
 
   std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
@@ -68,7 +80,9 @@ String sendToSheet(String name, String uid) {
   String response = "Kirim Gagal!";
 
   if (https.begin(*client, fullUrl)) {
-    https.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    // Tambahkan timeout 15 detik agar koneksi lebih stabil menuggu server Google
+    https.setTimeout(15000); 
+    
     https.addHeader("Accept", "text/plain");
     https.addHeader("User-Agent", "ESP8266HTTPClient");
 
@@ -76,18 +90,26 @@ String sendToSheet(String name, String uid) {
     Serial.println("HTTP Code: " + String(httpCode));
 
     if (httpCode == HTTP_CODE_OK) {
+      // Jika respons 200 OK, periksa isinya
       String raw = https.getString();
       raw.trim();
       Serial.println("Raw response: " + raw);
 
       if (raw.startsWith("<!") || raw.startsWith("<html") || raw.startsWith("<HTML")) {
         response = "Akses Ditolak!";
-        Serial.println("ERROR: Google mengembalikan HTML - script butuh login");
+        Serial.println("ERROR: Google mengembalikan HTML (Kemungkinan izin akses)");
       } else {
         response = raw;
       }
+      
+    } else if (httpCode == 302 || httpCode == 303) {
+      // KUNCI PERBAIKAN: Jika respons 302/303, ABAIKAN pembacaan HTML-nya.
+      // Langsung anggap sukses karena data sudah dieksekusi oleh Google Sheets.
+      Serial.println("Data berhasil dieksekusi oleh Google (Mengabaikan Redirect HTML).");
+      response = "Berhasil"; 
 
     } else {
+      // Menangkap error HTTP lainnya
       response = "HTTP: " + String(httpCode);
       Serial.println("ERROR HTTP Code: " + String(httpCode));
     }
@@ -229,13 +251,12 @@ void loop() {
           String result = sendToSheet(name, uidString);
           Serial.println("Respons: " + result);
 
-
           lcd.clear();
           lcd.setCursor(0, 0);
           lcd.print(name.substring(0, 16));
           lcd.setCursor(0, 1);
 
-          if (result == "Akses Ditolak!" || result == "Kirim Gagal!" || result.startsWith("HTTP:")) {
+          if (isResponseError(result)) {
             lcd.print("Gagal Terkirim!");
             buzzerError();
           } else {
