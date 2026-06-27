@@ -7,25 +7,19 @@
 
 // ===================== Definisi Pin =====================
 #define SS_PIN    D4
-#define RST_PIN   D3
-#define TRIG_PIN  D0
-#define ECHO_PIN  3
-#define BUZZ_PIN  D8
+#define RST_PIN   D3   // Pin Reset RFID di D3
+#define BUZZ_PIN  D0   // Pin Buzzer aman di D0 (Bekas Ultrasonik)
 
 // ===================== Konfigurasi WiFi =====================
-#define WIFI_SSID     "vivo Y28"
-#define WIFI_PASSWORD "justChill"
+#define WIFI_SSID     "duno"
+#define WIFI_PASSWORD "23571113"
 
 // ===================== URL Google Sheets =====================
 String sheet_url = "https://script.google.com/macros/s/AKfycbxEM4eBS8H7MFzBTjxN2KICNB9qltNQzvQMWYjs_20R3sH0ztFR4wfoBy9seIjLEvBQ/exec";
 
 // ===================== Objek =====================
 MFRC522 rfid(SS_PIN, RST_PIN);
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-unsigned long lastDetectionTime = 0;
-const unsigned long displayTimeout = 5000;
-bool isDisplayActive = false;
+LiquidCrystal_I2C lcd(0x27, 16, 2); // ✅ Alamat fix 0x27 sesuai hasil scan
 
 // ===================== Mapping UID → Nama =====================
 String getNameByUID(String uid) {
@@ -59,7 +53,6 @@ bool isResponseError(String result) {
 
 // ===================== Fungsi Kirim ke Google Sheets =====================
 String sendToSheet(String name, String uid) {
-  // ✅ Cek WiFi — langsung return "WiFi Gagal!" jika tidak terhubung
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
     delay(3000);
@@ -80,7 +73,6 @@ String sendToSheet(String name, String uid) {
   String response = "Kirim Gagal!";
 
   if (https.begin(*client, fullUrl)) {
-    // Tambahkan timeout 15 detik agar koneksi lebih stabil menuggu server Google
     https.setTimeout(15000); 
     
     https.addHeader("Accept", "text/plain");
@@ -90,7 +82,6 @@ String sendToSheet(String name, String uid) {
     Serial.println("HTTP Code: " + String(httpCode));
 
     if (httpCode == HTTP_CODE_OK) {
-      // Jika respons 200 OK, periksa isinya
       String raw = https.getString();
       raw.trim();
       Serial.println("Raw response: " + raw);
@@ -103,13 +94,10 @@ String sendToSheet(String name, String uid) {
       }
       
     } else if (httpCode == 302 || httpCode == 303) {
-      // KUNCI PERBAIKAN: Jika respons 302/303, ABAIKAN pembacaan HTML-nya.
-      // Langsung anggap sukses karena data sudah dieksekusi oleh Google Sheets.
       Serial.println("Data berhasil dieksekusi oleh Google (Mengabaikan Redirect HTML).");
       response = "Berhasil"; 
 
     } else {
-      // Menangkap error HTTP lainnya
       response = "HTTP: " + String(httpCode);
       Serial.println("ERROR HTTP Code: " + String(httpCode));
     }
@@ -135,18 +123,26 @@ void buzzerError() {
 
 // ===================== Fungsi Buzzer Sukses =====================
 void buzzerSukses() {
-  tone(BUZZ_PIN, 2000);
+  tone(BUZZ_PIN, 4000);
   delay(150);
   noTone(BUZZ_PIN);
 }
 
+// ===================== Fungsi Tampilan Standby =====================
+void tampilkanStandby() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Sistem Presensi");
+  lcd.setCursor(0, 1);
+  lcd.print("Silahkan Tap...");
+}
+
 // ===================== Setup =====================
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200); // Menggunakan 115200 baud yang stabil di PC
 
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
   pinMode(BUZZ_PIN, OUTPUT);
+  digitalWrite(BUZZ_PIN, LOW);
 
   SPI.begin();
   rfid.PCD_Init();
@@ -173,118 +169,76 @@ void setup() {
     lcd.print("WiFi Terhubung!");
     lcd.setCursor(0, 1);
     lcd.print(WiFi.localIP().toString());
-    Serial.println("WiFi OK: " + WiFi.localIP().toString());
+    Serial.println("\nWiFi OK: " + WiFi.localIP().toString());
   } else {
     lcd.setCursor(0, 0);
     lcd.print("WiFi Gagal!");
     lcd.setCursor(0, 1);
     lcd.print("Cek Koneksi...");
-    Serial.println("WiFi GAGAL");
+    Serial.println("\nWiFi GAGAL");
   }
 
   delay(2000);
-  lcd.noBacklight();
-  lcd.clear();
+  tampilkanStandby();
 }
 
 // ===================== Loop =====================
 void loop() {
+  if (rfid.PICC_IsNewCardPresent()) {
+    if (rfid.PICC_ReadCardSerial()) {
 
-  // 1. Deteksi ultrasonik
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+      buzzerSukses();
 
-  long duration = pulseIn(ECHO_PIN, HIGH, 20000);
-  int distance = (duration == 0) ? 999 : duration * 0.034 / 2;
+      String uidString = "";
+      for (byte i = 0; i < rfid.uid.size; i++) {
+        if (rfid.uid.uidByte[i] < 0x10) uidString += "0";
+        uidString += String(rfid.uid.uidByte[i], HEX);
+      }
+      uidString.toUpperCase();
+      Serial.println("UID terbaca: " + uidString);
 
-  // 2. Nyalakan LCD jika ada objek < 20cm
-  if (distance > 0 && distance < 20) {
-    lastDetectionTime = millis();
+      String name = getNameByUID(uidString);
 
-    if (!isDisplayActive) {
-      lcd.backlight();
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("PENGMAS IEEE");
-      lcd.setCursor(0, 1);
-      lcd.print("Silahkan Tap...");
-      isDisplayActive = true;
-    }
-
-    // 3. Baca RFID
-    if (rfid.PICC_IsNewCardPresent()) {
-      if (rfid.PICC_ReadCardSerial()) {
-
-        buzzerSukses();
-
-        // Baca UID
-        String uidString = "";
-        for (byte i = 0; i < rfid.uid.size; i++) {
-          if (rfid.uid.uidByte[i] < 0x10) uidString += "0";
-          uidString += String(rfid.uid.uidByte[i], HEX);
-        }
-        uidString.toUpperCase();
-        Serial.println("UID terbaca: " + uidString);
-
-        String name = getNameByUID(uidString);
-
-        if (name == "") {
-          lcd.clear();
-          lcd.setCursor(0, 0);
-          lcd.print("Kartu Unknown!");
-          lcd.setCursor(0, 1);
-          lcd.print(uidString);
-          Serial.println("UID tidak terdaftar: " + uidString);
-          buzzerError();
-          delay(2000);
-
-        } else {
-          lcd.clear();
-          lcd.setCursor(0, 0);
-          lcd.print("Nama: " + name);
-          lcd.setCursor(0, 1);
-          lcd.print("Mengirim...");
-
-          String result = sendToSheet(name, uidString);
-          Serial.println("Respons: " + result);
-
-          lcd.clear();
-          lcd.setCursor(0, 0);
-          lcd.print(name.substring(0, 16));
-          lcd.setCursor(0, 1);
-
-          if (isResponseError(result)) {
-            lcd.print("Gagal Terkirim!");
-            buzzerError();
-          } else {
-            lcd.print("Telah Tercatat!");
-          }
-
-          delay(3000);
-        }
-
-        // Kembali ke tampilan utama
+      if (name == "") {
         lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("PENGMAS IEEE");
+        lcd.print("Kartu Unknown!");
         lcd.setCursor(0, 1);
-        lcd.print("Silahkan Tap...");
+        lcd.print(uidString);
+        Serial.println("UID tidak terdaftar: " + uidString);
+        buzzerError();
+        delay(2000);
 
-        rfid.PICC_HaltA();
-        rfid.PCD_StopCrypto1();
-        lastDetectionTime = millis();
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Nama: " + name);
+        lcd.setCursor(0, 1);
+        lcd.print("Mengirim...");
+
+        String result = sendToSheet(name, uidString);
+        Serial.println("Respons: " + result);
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(name.substring(0, 16));
+        lcd.setCursor(0, 1);
+
+        if (isResponseError(result)) {
+          lcd.print("Gagal Terkirim!");
+          buzzerError();
+        } else {
+          lcd.print("Telah Tercatat!");
+        }
+
+        delay(3000);
       }
-    }
-  }
 
-  // 4. Matikan LCD jika timeout
-  if (isDisplayActive && (millis() - lastDetectionTime > displayTimeout)) {
-    lcd.noBacklight();
-    lcd.clear();
-    isDisplayActive = false;
+      tampilkanStandby();
+
+      rfid.PICC_HaltA();
+      rfid.PCD_StopCrypto1();
+    }
   }
 
   yield();
