@@ -1,0 +1,9 @@
+{
+  "name": "esp8266-attendance-dashboard",
+  "version": "1.0.0",
+  "description": "Backend API untuk Sistem Presensi ESP8266",
+  "main": "api/attendance.js",
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
