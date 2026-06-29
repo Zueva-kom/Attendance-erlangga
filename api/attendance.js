@@ -52,16 +52,23 @@ module.exports = async (req, res) => {
 
     console.log(`[LOG] Device: ${device_id || "Aparat"} | UID: ${uid} | Nama: ${namaSiswa} | Jam: ${currentHour} | Status: ${statusAbsen}`);
 
-    // 3. MENERUSKAN DATA KE GOOGLE SHEETS
-    // Menyusun ulang query string sesuai format skrip Google Apps Script bawaanmu
+    // --- 3. MENERUSKAN DATA KE GOOGLE SHEETS ---
     const forwardUrl = `${GOOGLE_SHEET_URL}?name=${encodeURIComponent(namaSiswa)}&id=${uid}&status=${statusAbsen}`;
     
-    // Menembak data ke Google Sheets via HTTP GET
-    await fetch(forwardUrl, { method: 'GET' });
+    // Gunakan try-catch lokal atau biarkan fetch berjalan tanpa mempedulikan return bodynya
+    try {
+      await fetch(forwardUrl, { method: 'GET' });
+    } catch (err) {
+      console.error("[WARNING] Gagal meneruskan ke Google Sheets:", err.message);
+      // Tetap lanjutkan agar ESP8266 menerima respon JSON walaupun Sheets lambat/error
+    }
     
-    // 4. RESPONS BALIK UNTUK DIKONSUMSI OLEH ESP8266
-    // Mengembalikan string "SUCCESS_MASUK" atau "SUCCESS_KELUAR" agar dibaca oleh alat
-    return res.status(200).send(`SUCCESS_${statusAbsen}`);
+    // --- 4. RESPONS BALIK KE ESP8266 ---
+    // Pastikan ini dieksekusi secara bersih dan independen
+    return res.status(200).json({
+      status: statusAbsen,
+      name: namaSiswa
+    });
 
   } catch (error) {
     console.error("[ERROR] Terjadi kegagalan sistem backend:", error);
