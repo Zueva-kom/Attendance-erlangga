@@ -84,14 +84,14 @@ module.exports = async (req, res) => {
 
     let statusAbsen = "MASUK";
 
-    if (currentHour >= 6 && currentHour < 15) {
-      if (currentHour >= 6 && currentHour < 9) {
+    if (currentHour >= 22 && currentHour < 24) {
+      if (currentHour >= 22 && currentHour < 23) {
         statusAbsen = "MASUK";
       } else {
         statusAbsen = "TERLAMBAT"; 
       }
     } 
-    else if (currentHour >= 15 && currentHour < 21) {
+    else if (currentHour >= 24 && currentHour < 3) {
       statusAbsen = "KELUAR";
     } 
     else {
