@@ -2,7 +2,7 @@ const fetch = require('node-fetch');
 const daftarSiswa = require('../data/siswa.json');
 
 // URL Web App Google Sheets (Ganti sesuai URL Deployment Google Apps Script milikmu)
-const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxkPd4k0jG5YvdSj2NApcP-7_LuAyN8vOHE4pgVr3cDE-bLxFzHrHLdHuC7sPWWKUj1Qw/exec";
+const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxXdPPeF0W-vavS7xK10WBdsSFzbiwI9C52vEyM9Pn7snSx1wYPJru_FkfZfPkB42LEMQ/exec";
 
 module.exports = async (req, res) => {
   // Mengatur Header CORS agar bisa diakses secara fleksibel jika dikembangkan ke web dashboard
