@@ -3,7 +3,7 @@ const path = require('path');
 const fetch = require('node-fetch');
 
 // URL Web App Google Sheets hasil deployment terbaru
-const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxkPd4k0jG5YvdSj2NApcP-7_LuAyN8vOHE4pgVr3cDE-bLxFzHrHLdHuC7sPWWKUj1Qw/exec";
+const GOOGLE_SHEET_URL = "https://script.google.com/a/macros/student.itk.ac.id/s/AKfycbxkPd4k0jG5YvdSj2NApcP-7_LuAyN8vOHE4pgVr3cDE-bLxFzHrHLdHuC7sPWWKUj1Qw/exec";
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
