@@ -84,14 +84,14 @@ module.exports = async (req, res) => {
 
     let statusAbsen = "MASUK";
 
-    if (currentHour >= 22 && currentHour < 24) {
-      if (currentHour >= 22 && currentHour < 23) {
+    if (currentHour >= 22 && currentHour < 24) { // ----------------------> rentang bisa in
+      if (currentHour >= 22 && currentHour < 23) { // ----------------> in dianggap sah
         statusAbsen = "MASUK";
       } else {
         statusAbsen = "TERLAMBAT"; 
       }
     } 
-    else if (currentHour >= 24 && currentHour < 3) {
+    else if (currentHour >= 24 && currentHour < 3) { // --------------> Waktu Keluar
       statusAbsen = "KELUAR";
     } 
     else {
