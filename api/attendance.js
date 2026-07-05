@@ -1,8 +1,12 @@
-const fetch = require('node-fetch');
-const daftarSiswa = require('../data/siswa.json');
+const { Pool } = require('pg');
 
-// URL Web App Google Sheets (Ganti sesuai URL Deployment Google Apps Script milikmu)
-const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxkPd4k0jG5YvdSj2NApcP-7_LuAyN8vOHE4pgVr3cDE-bLxFzHrHLdHuC7sPWWKUj1Qw/exec";
+// Konfigurasi koneksi PostgreSQL ke Supabase via Environment Variable
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false // Wajib untuk penyedia cloud seperti Supabase/Neon
+  }
+});
 
 module.exports = async (req, res) => {
   // Mengatur Header CORS agar bisa diakses secara fleksibel jika dikembangkan ke web dashboard
@@ -21,70 +25,90 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { device_id, uid } = req.body;
+    const { device_id, uid } = req.body; // device_id berisi info kelas dari NodeMCU (e.g., "tkj_2") [cite: 9]
 
     // Validasi input data dari ESP8266
     if (!uid) {
       return res.status(400).json({ error: 'Bad Request. Parameter UID tidak ditemukan.' });
     }
 
-    // 1. PEMETAAN DATA SISWA (Server-Side Mapping)
-    // Mencari nama berdasarkan UID dari file JSON. Jika tidak ada, otomatis 'Unknown'
-    const namaSiswa = daftarSiswa[uid] || "Unknown";
+    // 1. VERIFIKASI SISWA & KELAS (Membaca langsung dari PostgreSQL Supabase)
+    const querySiswa = `
+      SELECT s.nama_siswa, k.nama_kelas 
+      FROM siswa s
+      JOIN kelas k ON s.id_kelas = k.id_kelas
+      WHERE s.uid_tag = $1;
+    `;
+    const resultSiswa = await pool.query(querySiswa, [uid]);
 
-    // 2. LOGIKA PENENTUAN WAKTU (Zona Waktu WITA)
+    // KONDISI: Jika kartu tidak terdaftar di database Supabase
+    if (resultSiswa.rows.length === 0) {
+      return res.status(200).json({
+        status: "REJECTED",
+        name: "Unknown",
+        message: "Tidak Terdaftar" // Memicu buzzerDitolak() di NodeMCU [cite: 33, 34]
+      });
+    }
+
+    const siswa = resultSiswa.rows[0];
+    const namaSiswa = siswa.nama_siswa;
+    const kelasSiswa = siswa.nama_kelas; 
+
+    // PENGAMAN KELAS: Memastikan siswa tap di alat kelasnya sendiri [cite: 9]
+    const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const kelasClean = kelasSiswa.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (deviceClean !== kelasClean) {
+      return res.status(200).json({
+        status: "REJECTED",
+        name: namaSiswa,
+        message: "Salah Kelas" // Memicu buzzerDitolak() di NodeMCU [cite: 33, 34]
+      });
+    }
+
+    // 2. LOGIKA PENENTUAN WAKTU & STATUS (Zona Waktu WITA)
     const options = { timeZone: 'Asia/Makassar', hour: '2-digit', minute: '2-digit', hour12: false };
     const timeString = new Date().toLocaleTimeString('id-ID', options); 
-    
-    // Parsing nilai jam secara aman
     const currentHour = parseInt(timeString.split(/[.:]/)[0], 10);
 
-    let statusAbsen = "MASUK"; // Default diset MASUK agar Apps Script mengenali sebagai sesi masuk
+    let statusAbsen = "MASUK";
 
-    // =========================================================================
-    // LOCKING TIME WINDOW LOGIC
-    // =========================================================================
     if (currentHour >= 6 && currentHour < 15) {
-      // JAM 06:00 s/d 14:59 WITA -> Sesi Masuk Kelas
-      // Di rentang jam ini, mau di-tap berapa kalipun statusnya TETAP masuk/telat.
       if (currentHour >= 6 && currentHour < 9) {
-        statusAbsen = "MASUK";
+        statusAbsen = "IN"; // Disimpan sebagai 'IN' sesuai ENUM database
       } else {
         statusAbsen = "TERLAMBAT"; 
       }
-    } 
-    else if (currentHour >= 15 && currentHour < 21) {
-      // JAM 15:00 s/d 20:59 WITA -> Sesi Pulang
-      // Di rentang jam ini baru diizinkan mencatat status KELUAR
-      statusAbsen = "KELUAR";
-    } 
-    else {
-      // Di luar jam operasional sekolah (malam/subuh)
-      statusAbsen = "DILUAR_JAM"; 
+    } else if (currentHour >= 15 && currentHour < 21) {
+      statusAbsen = "OUT"; // Disimpan sebagai 'OUT' sesuai ENUM database
+    } else {
+      statusAbsen = "DILUAR_JAM";
     }
-    // =========================================================================
 
-    console.log(`[LOG] Device: ${device_id || "Aparat"} | UID: ${uid} | Nama: ${namaSiswa} | Jam: ${currentHour} | Status: ${statusAbsen}`);
+    // Jika di luar jam operasional, tidak perlu insert ke log presensi database
+    if (statusAbsen === "DILUAR_JAM") {
+      return res.status(200).json({
+        status: "DILUAR_JAM",
+        name: namaSiswa
+      });
+    }
 
-    // --- 3. MENERUSKAN DATA KE GOOGLE SHEETS ---
-    const forwardUrl = `${GOOGLE_SHEET_URL}?name=${encodeURIComponent(namaSiswa)}&id=${uid}&status=${statusAbsen}`;
-    console.log("[DEBUG] forwardUrl:", forwardUrl);
-    // Gunakan try-catch lokal atau biarkan fetch berjalan tanpa mempedulikan return bodynya
-  try {
-    const sheetRes = await fetch(forwardUrl, { 
-      method: 'GET',
-      redirect: 'follow'
-    });
-    const sheetText = await sheetRes.text();
-    console.log("[SHEETS]", sheetRes.status, sheetText);
-  } catch (err) {
-    console.error("[WARNING] Gagal meneruskan ke Google Sheets:", err.message);
-  } 
+    // 3. INSERT LOG PRESENSI KE POSTGRESQL
+    // Status 'TERLAMBAT' tetap dimasukkan sebagai 'IN' di DB agar sesuai dengan ENUM database status_presensi
+    const dbStatus = (statusAbsen === "TERLAMBAT") ? "IN" : statusAbsen;
     
-    // --- 4. RESPONS BALIK KE ESP8266 ---
-    // Pastikan ini dieksekusi secara bersih dan independen
+    const queryInsert = `
+      INSERT INTO presensi (uid_tag, status) 
+      VALUES ($1, $2);
+    `;
+    await pool.query(queryInsert, [uid, dbStatus]);
+
+    console.log(`[POSTGRES LOG] ${namaSiswa} (${kelasSiswa}) -> Status: ${statusAbsen}`);
+
+    // 4. RESPONS BALIK KE ESP8266
+    // Mengembalikan string status asli ("MASUK", "TERLAMBAT", "KELUAR") agar kompatibel dengan *.ino di hardware [cite: 34, 35, 36, 37]
     return res.status(200).json({
-      status: statusAbsen,
+      status: (statusAbsen === "IN") ? "MASUK" : statusAbsen, 
       name: namaSiswa
     });
 
