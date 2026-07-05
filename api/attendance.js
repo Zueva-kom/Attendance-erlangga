@@ -72,26 +72,14 @@ module.exports = async (req, res) => {
     const currentHour = parseInt(timeString.split(/[.:]/)[0], 10);
 
     let statusAbsen = "MASUK";
-
-    if (currentHour >= 6 && currentHour < 15) {
-      if (currentHour >= 6 && currentHour < 9) {
-        statusAbsen = "IN"; // Disimpan sebagai 'IN' sesuai ENUM database
-      } else {
-        statusAbsen = "TERLAMBAT"; 
-      }
-    } else if (currentHour >= 15 && currentHour < 21) {
-      statusAbsen = "OUT"; // Disimpan sebagai 'OUT' sesuai ENUM database
-    } else {
-      statusAbsen = "DILUAR_JAM";
-    }
-
-    // Jika di luar jam operasional, tidak perlu insert ke log presensi database
-    if (statusAbsen === "DILUAR_JAM") {
-      return res.status(200).json({
-        status: "DILUAR_JAM",
-        name: namaSiswa
-      });
-    }
+// KODE BARU (Saran untuk testing sekarang)
+if (currentHour >= 0 && currentHour < 15) {
+  // Jam berapapun sebelum jam 3 siang akan dianggap masuk/terlambat dan TETAP DI-INSERT
+  statusAbsen = "IN"; 
+} else if (currentHour >= 15 && currentHour < 24) {
+  // Jam berapapun setelah jam 3 siang akan dianggap pulang
+  statusAbsen = "OUT"; 
+}
 
     // 3. INSERT LOG PRESENSI KE POSTGRESQL
     // Status 'TERLAMBAT' tetap dimasukkan sebagai 'IN' di DB agar sesuai dengan ENUM database status_presensi
