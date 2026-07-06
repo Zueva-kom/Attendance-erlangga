@@ -4,6 +4,7 @@
   "description": "Backend API untuk Sistem Presensi ESP8266",
   "main": "api/attendance.js",
   "dependencies": {
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "pg": "^8.11.3"
   }
 }
