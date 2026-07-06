@@ -11,12 +11,12 @@
 #define BUZZ_PIN  D8   // Pin D8 (GPIO15)
 
 // ===================== Konfigurasi WiFi =====================
-#define WIFI_SSID     "Kalorimeter"
-#define WIFI_PASSWORD "Modul_2#"
+#define WIFI_SSID     "duno"
+#define WIFI_PASSWORD "23571113"
 
 // ===================== IDENTITAS MESIN ABSENSI =====================
 // Sesuaikan dengan nama kelas. Harus sinkron dengan data "kelas" di siswa.json (misal: "TKJ 1")
-const String DEVICE_ID = "TKJ 1";
+const String DEVICE_ID = "TKJ 2";
 
 // URL API Vercel Dashboard
 String vercel_api_url = "https://attendance-airlangga.vercel.app/api/attendance";
