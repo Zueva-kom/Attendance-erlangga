@@ -73,14 +73,14 @@ module.exports = async (req, res) => {
 
     let statusAbsen = "MASUK";
 
-    // KODE BARU (Saran untuk testing sekarang)
-    if (currentHour >= 0 && currentHour < 15) {
-      // Jam berapapun sebelum jam 3 siang akan dianggap masuk/terlambat dan TETAP DI-INSERT
-      statusAbsen = "IN"; 
-    } else if (currentHour >= 15 && currentHour < 24) {
-      // Jam berapapun setelah jam 3 siang akan dianggap pulang
-      statusAbsen = "OUT"; 
-    }
+    // // KODE BARU (Saran untuk testing sekarang)
+    // if (currentHour >= 0 && currentHour < 15) {
+    //   // Jam berapapun sebelum jam 3 siang akan dianggap masuk/terlambat dan TETAP DI-INSERT
+    //   statusAbsen = "IN"; 
+    // } else if (currentHour >= 15 && currentHour < 24) {
+    //   // Jam berapapun setelah jam 3 siang akan dianggap pulang
+    //   statusAbsen = "OUT"; 
+    // }
 
     // 3. INSERT LOG PRESENSI KE POSTGRESQL
     // Status 'TERLAMBAT' tetap dimasukkan sebagai 'IN' di DB agar sesuai dengan ENUM database status_presensi
