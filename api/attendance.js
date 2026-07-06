@@ -66,38 +66,27 @@ module.exports = async (req, res) => {
       });
     }
 
-    // 2. LOGIKA PENENTUAN WAKTU & STATUS (Zona Waktu WITA)
+// 2. LOGIKA PENENTUAN WAKTU & STATUS (Zona Waktu WITA)
     const options = { timeZone: 'Asia/Makassar', hour: '2-digit', minute: '2-digit', hour12: false };
     const timeString = new Date().toLocaleTimeString('id-ID', options); 
     const currentHour = parseInt(timeString.split(/[.:]/)[0], 10);
 
     let statusAbsen = "MASUK";
 
-    // // KODE BARU (Saran untuk testing sekarang)
-    // if (currentHour >= 0 && currentHour < 15) {
-    //   // Jam berapapun sebelum jam 3 siang akan dianggap masuk/terlambat dan TETAP DI-INSERT
-    //   statusAbsen = "IN"; 
-    // } else if (currentHour >= 15 && currentHour < 24) {
-    //   // Jam berapapun setelah jam 3 siang akan dianggap pulang
-    //   statusAbsen = "OUT"; 
-    // }
+    if (currentHour >= 0 && currentHour < 15) {
+      statusAbsen = "IN"; 
+    } else {
+      statusAbsen = "OUT"; 
+    }
 
     // 3. INSERT LOG PRESENSI KE POSTGRESQL
-    // Status 'TERLAMBAT' tetap dimasukkan sebagai 'IN' di DB agar sesuai dengan ENUM database status_presensi
     const dbStatus = (statusAbsen === "TERLAMBAT") ? "IN" : statusAbsen;
-    
-    const queryInsert = `
-      INSERT INTO presensi (uid_tag, status) 
-      VALUES ($1, $2);
-    `;
+    const queryInsert = `INSERT INTO presensi (uid_tag, status) VALUES ($1, $2);`;
     await pool.query(queryInsert, [uid, dbStatus]);
 
-    console.log(`[POSTGRES LOG] ${namaSiswa} (${kelasSiswa}) -> Status: ${statusAbsen}`);
-
     // 4. RESPONS BALIK KE ESP8266
-    // Mengembalikan string status asli ("MASUK", "TERLAMBAT", "KELUAR") agar kompatibel dengan *.ino di hardware [cite: 34, 35, 36, 37]
     return res.status(200).json({
-      status: (statusAbsen === "IN") ? "MASUK" : statusAbsen, 
+      status: (statusAbsen === "IN") ? "MASUK" : "KELUAR", // Diubah menjadi KELUAR agar OLED/LCD menampilkan pesan pulang yang sesuai [cite: 34, 37]
       name: namaSiswa
     });
 
