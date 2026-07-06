@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { device_id, uid } = req.body; // device_id berisi info kelas dari NodeMCU (e.g., "tkj_2") [cite: 9]
+    const { device_id, uid } = req.body; // device_id berisi info kelas dari NodeMCU (e.g., "tkj_2")
 
     // Validasi input data dari ESP8266
     if (!uid) {
@@ -42,11 +42,12 @@ module.exports = async (req, res) => {
     const resultSiswa = await pool.query(querySiswa, [uid]);
 
     // KONDISI: Jika kartu tidak terdaftar di database Supabase
+    // Ditambahkan 'return' agar fungsi langsung berhenti dan tidak menembus query INSERT
     if (resultSiswa.rows.length === 0) {
       return res.status(200).json({
         status: "REJECTED",
         name: "Unknown",
-        message: "Tidak Terdaftar" // Memicu buzzerDitolak() di NodeMCU [cite: 33, 34]
+        message: "Tidak Terdaftar"
       });
     }
 
@@ -54,38 +55,36 @@ module.exports = async (req, res) => {
     const namaSiswa = siswa.nama_siswa;
     const kelasSiswa = siswa.nama_kelas; 
 
-    // PENGAMAN KELAS: Memastikan siswa tap di alat kelasnya sendiri [cite: 9]
+    // PENGAMAN KELAS: Memastikan siswa tap di alat kelasnya sendiri
     const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
     const kelasClean = kelasSiswa.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+    // Ditambahkan 'return' agar fungsi langsung berhenti jika salah kelas
     if (deviceClean !== kelasClean) {
       return res.status(200).json({
         status: "REJECTED",
         name: namaSiswa,
-        message: "Salah Kelas" // Memicu buzzerDitolak() di NodeMCU [cite: 33, 34]
+        message: "Salah Kelas"
       });
     }
 
-// 2. LOGIKA PENENTUAN WAKTU & STATUS (Zona Waktu WITA)
+    // 2. LOGIKA PENENTUAN WAKTU & STATUS (Zona Waktu WITA)
     const options = { timeZone: 'Asia/Makassar', hour: '2-digit', minute: '2-digit', hour12: false };
     const timeString = new Date().toLocaleTimeString('id-ID', options); 
     const currentHour = parseInt(timeString.split(/[.:]/)[0], 10);
 
     let statusAbsen = "MASUK";
 
+    // AKTIFKAN KEMBALI: Logika penentuan status IN dan OUT
     if (currentHour >= 0 && currentHour < 15) {
       statusAbsen = "IN"; 
-    } else {
+    } else if (currentHour >= 15 && currentHour < 24) {
       statusAbsen = "OUT"; 
     }
 
-// ==========================================
     // 3. INSERT LOG PRESENSI KE POSTGRESQL
-    // ==========================================
-    
-    // Perbaikan Testing: Pastikan nilai dbStatus HANYA 'IN' atau 'OUT' agar tidak ditolak ENUM database
-    // Kita kunci sementara ke "IN" untuk keperluan unit testing agar aman masuk DB
-    const dbStatus = "IN"; 
+    // Sesuai dengan konfigurasi ENUM database, nilai dbStatus HANYA boleh berisi 'IN' atau 'OUT'
+    const dbStatus = (statusAbsen === "TERLAMBAT" || statusAbsen === "IN") ? "IN" : "OUT";
     
     const queryInsert = `
       INSERT INTO presensi (uid_tag, status) 
@@ -93,9 +92,12 @@ module.exports = async (req, res) => {
     `;
     await pool.query(queryInsert, [uid, dbStatus]);
 
+    console.log(`[POSTGRES LOG] ${namaSiswa} (${kelasSiswa}) -> Status: ${statusAbsen}`);
+
     // 4. RESPONS BALIK KE ESP8266
+    // Mengembalikan string yang ramah dengan logika kompilasi *.ino pada hardware
     return res.status(200).json({
-      status: (statusAbsen === "IN") ? "MASUK" : "KELUAR", // Diubah menjadi KELUAR agar OLED/LCD menampilkan pesan pulang yang sesuai [cite: 34, 37]
+      status: (statusAbsen === "IN") ? "MASUK" : "KELUAR", 
       name: namaSiswa
     });
 
