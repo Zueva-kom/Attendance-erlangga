@@ -90,7 +90,7 @@ module.exports = async (req, res) => {
 
       // Menggunakan 'created_at' sebagai contoh kolom timestamp default PostgreSQL/Supabase
       const queryCekAbsen = `
-        SELECT id FROM presensi 
+        SELECT uid_tag FROM presensi 
         WHERE uid_tag = $1 
           AND status = $2 
           AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
