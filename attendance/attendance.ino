@@ -163,8 +163,7 @@ void loop() {
 
     // Tampilan proses kirim data di LCD
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("UID: " + uidString);
-    lcd.setCursor(0, 1); lcd.print("Verifikasi...");
+    lcd.setCursor(0, 0); lcd.print("Verifikasi...");
 
     // Mengirimkan data UID ke Vercel API
     String result = sendJsonToVercel(uidString);
