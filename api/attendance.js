@@ -23,7 +23,6 @@ module.exports = async (req, res) => {
     // ========================================================
     // OPTIMASI 1: LOGIKA WAKTU DIBAWA KE ATAS (EARLY EXIT)
     // ========================================================
-    // Cara cepat konversi waktu server ke WITA (UTC+8) tanpa loop objek parts yang lambat
     const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
     const currentHour = targetTime.getUTCHours();
     const currentMinute = targetTime.getUTCMinutes();
@@ -91,11 +90,44 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "REJECTED", name: namaSiswa, message: "Salah Kelas" });
     }
 
+// ========================================================
+    // 3. PROSES VALIDASI & SIMPAN KE DATABASE
     // ========================================================
-    // 3. PROSES SIMPAN KE DATABASE
-    // ========================================================
-    const queryInsert = `INSERT INTO presensi (uid_tag, status) VALUES ($1, $2);`;
-    await pool.query(queryInsert, [uid, dbStatus]);
+    if (hitungDatabase) {
+      
+      // Ambil tanggal hari ini dalam format YYYY-MM-DD sesuai zona waktu WITA
+      const tahun = targetTime.getUTCFullYear();
+      const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
+      const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
+      const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`;
+
+      // QUERY CEK: Apakah siswa ini sudah melakukan absen dengan status yang sama HARI INI?
+      const queryCekAbsen = `
+        SELECT id FROM presensi 
+        WHERE uid_tag = $1 
+          AND status = $2 
+          AND (waktu AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
+        LIMIT 1;
+      `;
+
+      const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
+
+      if (resultCek.rows.length > 0) {
+        // Jika sudah pernah tap untuk sesi ini (IN atau OUT) hari ini, kunci!
+        return res.status(200).json({
+          status: "SUDAH_ABSEN", // Status ini akan dibaca oleh NodeMCU
+          name: namaSiswa
+        });
+      }
+
+      // Jika belum pernah absen sesi ini, baru lakukan INSERT
+      const queryInsert = `INSERT INTO presensi (uid_tag, status) VALUES ($1, $2);`;
+      await pool.query(queryInsert, [uid, dbStatus]);
+      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
+
+    } else {
+      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
+    }
 
     // ========================================================
     // 4. RESPONS BALIK KE NODEMCU
