@@ -93,7 +93,7 @@ module.exports = async (req, res) => {
         SELECT uid_tag FROM presensi 
         WHERE uid_tag = $1 
           AND status = $2 
-          AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
+          AND (waktu AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
         LIMIT 1;
       `;
 
