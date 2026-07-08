@@ -54,22 +54,12 @@ module.exports = async (req, res) => {
       hitungDatabase = true;
     } 
     else {
-      responStatusNodeMCU = "DILUAR_JAM";
-      // Kita kembalikan respon langsung TANPA harus mengorbankan kuota Query DB
       return res.status(200).json({ status: "DILUAR_JAM", name: "Siswa" });
     }
 
     // ========================================================
     // OPTIMASI 2: VERIFIKASI SISWA & KELAS (Hanya berjalan jika jamnya tepat)
     // ========================================================
-    const querySiswa = `
-      SELECT s.nama_siswa, k.nama_kelas 
-      FROM siswa s
-      JOIN kelas k ON s.id_kelas = k.id_kelas
-      WHERE s.uid_tag = $1_tag LIMIT 1;
-    `; // Menambahkan LIMIT 1 mempercepat pencarian query pencocokan
-    
-    // Ganti $1_tag jadi parameter aman $1
     const resultSiswa = await pool.query(`
       SELECT s.nama_siswa, k.nama_kelas 
       FROM siswa s
@@ -90,7 +80,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "REJECTED", name: namaSiswa, message: "Salah Kelas" });
     }
 
-// ========================================================
+    // ========================================================
     // 3. PROSES VALIDASI & SIMPAN KE DATABASE
     // ========================================================
     if (hitungDatabase) {
@@ -108,14 +98,14 @@ module.exports = async (req, res) => {
           AND status = $2 
           AND (waktu AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
         LIMIT 1;
-      `;
+      `; [cite: 2]
 
       const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
 
       if (resultCek.rows.length > 0) {
         // Jika sudah pernah tap untuk sesi ini (IN atau OUT) hari ini, kunci!
         return res.status(200).json({
-          status: "SUDAH_ABSEN", // Status ini akan dibaca oleh NodeMCU
+          status: "SUDAH_ABSEN", // Status ini akan dibaca oleh NodeMCU 
           name: namaSiswa
         });
       }
