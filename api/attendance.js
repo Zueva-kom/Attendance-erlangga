@@ -94,19 +94,21 @@ module.exports = async (req, res) => {
       hitungDatabase = false; 
     }
 
-    // ========================================================
-    // 3. PROSES SIMPAN KE DATABASE (Kolom dikembalikan asli agar tidak crash)
-    // ========================================================
-    if (hitungDatabase) {
-      const queryInsert = `
-        INSERT INTO presensi (uid_tag, status) 
-        VALUES ($1, $2);
-      `;
-      await pool.query(queryInsert, [uid, dbStatus]);
-      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
-    } else {
-      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
-    }
+// ========================================================
+// 3. PROSES SIMPAN KE DATABASE 
+// ========================================================
+if (hitungDatabase) {
+  // Ubah query INSERT di bawah ini:
+  const queryInsert = `
+    INSERT INTO presensi (uid_tag, status, nama_siswa) 
+    VALUES ($1, $2, $3);
+  `;
+  // Tambahkan namaSiswa ke dalam array parameter ($3)
+  await pool.query(queryInsert, [uid, dbStatus, namaSiswa]);
+  console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
+} else {
+  console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
+}
 
     // ========================================================
     // 4. RESPONS BALIK KE NODEMCU
