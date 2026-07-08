@@ -87,6 +87,27 @@ module.exports = async (req, res) => {
       hitungDatabase = true;
     } 
 
+    //Cek double tap//
+    if (hitungDatabase) {
+      // Query untuk mengecek apakah sudah ada data absen di tanggal yang sama (WITA)
+      // timezone('Asia/Makassar', CURRENT_TIMESTAMP): memastikan perbandingan hari menggunakan tanggal WITA
+      const queryCekDuplikat = `
+        SELECT id_presensi FROM presensi 
+        WHERE uid_tag = $1 
+          AND status = $2 
+          AND waktu::date = (timezone('Asia/Makassar', CURRENT_TIMESTAMP)::date);
+      `;
+      const resultDuplikat = await pool.query(queryCekDuplikat, [uid, dbStatus]);
+
+      if (resultDuplikat.rows.length > 0) {
+        console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Sudah absen ${dbStatus} hari ini)`);
+        return res.status(200).json({
+          status: "SUDAH_ABSEN",
+          name: namaSiswa
+        });
+      }
+    }
+
     // ========================================================
     // 3. PROSES SIMPAN KE DATABASE 
     // ========================================================
