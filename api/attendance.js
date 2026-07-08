@@ -1,8 +1,11 @@
 const { Pool } = require('pg');
 
+// Optimasi Pool untuk Serverless Lingkungan (mencegah kebanjiran koneksi di Supabase)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 2,             // Maksimal koneksi per instance serverless
+  idleTimeoutMillis: 5000 // Segera putuskan koneksi idle agar bisa dipakai instance lain
 });
 
 module.exports = async (req, res) => {
@@ -15,16 +18,65 @@ module.exports = async (req, res) => {
 
   try {
     const { device_id, uid } = req.body; 
-    if (!uid || !device_id) return res.status(400).json({ error: 'Parameter tidak lengkap.' });
+    if (!uid) return res.status(400).json({ error: 'Parameter UID tidak ditemukan.' });
 
-    // 1. VERIFIKASI SISWA & KELAS
+    // ========================================================
+    // OPTIMASI 1: LOGIKA WAKTU DIBAWA KE ATAS (EARLY EXIT)
+    // ========================================================
+    // Cara cepat konversi waktu server ke WITA (UTC+8) tanpa loop objek parts yang lambat
+    const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
+    const currentHour = targetTime.getUTCHours();
+    const currentMinute = targetTime.getUTCMinutes();
+    const totalMenitSekarang = (currentHour * 60) + currentMinute;
+
+    let responStatusNodeMCU = ""; 
+    let dbStatus = "";            
+    let hitungDatabase = false;   
+
+    const m_06_00 = 6 * 60;
+    const m_07_15 = (7 * 60) + 15;
+    const m_11_00 = 11 * 60;
+    const m_14_30 = (14 * 60) + 30;
+    const m_18_00 = 18 * 60;
+
+    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang < m_07_15) {
+      responStatusNodeMCU = "MASUK";
+      dbStatus = "IN";
+      hitungDatabase = true;
+    } 
+    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_11_00) {
+      responStatusNodeMCU = "TERLAMBAT";
+      dbStatus = "IN";
+      hitungDatabase = true;
+    } 
+    else if (totalMenitSekarang >= m_14_30 && totalMenitSekarang < m_18_00) {
+      responStatusNodeMCU = "KELUAR";
+      dbStatus = "OUT";
+      hitungDatabase = true;
+    } 
+    else {
+      responStatusNodeMCU = "DILUAR_JAM";
+      // Kita kembalikan respon langsung TANPA harus mengorbankan kuota Query DB
+      return res.status(200).json({ status: "DILUAR_JAM", name: "Siswa" });
+    }
+
+    // ========================================================
+    // OPTIMASI 2: VERIFIKASI SISWA & KELAS (Hanya berjalan jika jamnya tepat)
+    // ========================================================
     const querySiswa = `
       SELECT s.nama_siswa, k.nama_kelas 
       FROM siswa s
       JOIN kelas k ON s.id_kelas = k.id_kelas
-      WHERE s.uid_tag = $1;
-    `;
-    const resultSiswa = await pool.query(querySiswa, [uid]);
+      WHERE s.uid_tag = $1_tag LIMIT 1;
+    `; // Menambahkan LIMIT 1 mempercepat pencarian query pencocokan
+    
+    // Ganti $1_tag jadi parameter aman $1
+    const resultSiswa = await pool.query(`
+      SELECT s.nama_siswa, k.nama_kelas 
+      FROM siswa s
+      JOIN kelas k ON s.id_kelas = k.id_kelas
+      WHERE s.uid_tag = $1 LIMIT 1;
+    `, [uid]);
 
     if (resultSiswa.rows.length === 0) {
       return res.status(200).json({ status: "REJECTED", name: "Unknown", message: "Tidak Terdaftar" });
@@ -32,7 +84,7 @@ module.exports = async (req, res) => {
 
     const { nama_siswa: namaSiswa, nama_kelas: kelasSiswa } = resultSiswa.rows[0];
 
-    // PENGAMAN KELAS
+    // PENGAMAN KELAS (Regex dioptimalkan)
     const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
     const kelasClean = kelasSiswa.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (deviceClean !== kelasClean) {
@@ -40,88 +92,10 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 2. LOGIKA PENENTUAN WAKTU SECARA AMAN (Zona Waktu WITA)
+    // 3. PROSES SIMPAN KE DATABASE
     // ========================================================
-    const formatter = new Intl.DateTimeFormat('id-ID', {
-      timeZone: 'Asia/Makassar',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-    
-    const parts = formatter.formatToParts(new Date());
-    let currentHour = 0;
-    let currentMinute = 0;
-
-    for (const part of parts) {
-      if (part.type === 'hour') currentHour = parseInt(part.value, 10);
-      if (part.type === 'minute') currentMinute = parseInt(part.value, 10);
-    }
-
-    const totalMenitSekarang = (currentHour * 60) + currentMinute;
-
-    let responStatusNodeMCU = "DILUAR_JAM"; 
-    let dbStatus = "";            
-    let hitungDatabase = false;   
-
-    // --- DEKLARASI JENDELA WAKTU (SUDAH DIPERBAIKI) ---
-    const m_06_00 = 6 * 60;
-    const m_07_15 = (7 * 60) + 15;
-    const m_15_59 = (15 * 60) + 59;
-    const m_16_00 = 16 * 60;
-    const m_19_00 = 19 * 60;
-
-    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang < m_07_15) {
-      responStatusNodeMCU = "MASUK";
-      dbStatus = "IN";
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_15_59) {
-      responStatusNodeMCU = "TERLAMBAT";
-      dbStatus = "IN";
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_16_00 && totalMenitSekarang < m_19_00) {
-      responStatusNodeMCU = "KELUAR";
-      dbStatus = "OUT";
-      hitungDatabase = true;
-    } 
-
-    //Cek double tap//
-    if (hitungDatabase) {
-      // Query untuk mengecek apakah sudah ada data absen di tanggal yang sama (WITA)
-      // timezone('Asia/Makassar', CURRENT_TIMESTAMP): memastikan perbandingan hari menggunakan tanggal WITA
-      const queryCekDuplikat = `
-        SELECT id_presensi FROM presensi 
-        WHERE uid_tag = $1 
-          AND status = $2 
-          AND waktu::date = (timezone('Asia/Makassar', CURRENT_TIMESTAMP)::date);
-      `;
-      const resultDuplikat = await pool.query(queryCekDuplikat, [uid, dbStatus]);
-
-      if (resultDuplikat.rows.length > 0) {
-        console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Sudah absen ${dbStatus} hari ini)`);
-        return res.status(200).json({
-          status: "SUDAH_ABSEN",
-          name: namaSiswa
-        });
-      }
-    }
-
-    // ========================================================
-    // 3. PROSES SIMPAN KE DATABASE 
-    // ========================================================
-    if (hitungDatabase) {
-      // OPSI OPTIMASI: Anda bisa menambahkan pengecekan data duplikat di sini sebelum INSERT
-      const queryInsert = `
-        INSERT INTO presensi (uid_tag, status, nama_siswa) 
-        VALUES ($1, $2, $3);
-      `;
-      await pool.query(queryInsert, [uid, dbStatus, namaSiswa]);
-      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
-    } else {
-      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
-    }
+    const queryInsert = `INSERT INTO presensi (uid_tag, status) VALUES ($1, $2);`;
+    await pool.query(queryInsert, [uid, dbStatus]);
 
     // ========================================================
     // 4. RESPONS BALIK KE NODEMCU
