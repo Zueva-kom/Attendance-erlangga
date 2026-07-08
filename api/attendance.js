@@ -44,7 +44,6 @@ module.exports = async (req, res) => {
     // ========================================================
     // 2. LOGIKA PENENTUAN WAKTU SECARA AMAN (Zona Waktu WITA)
     // ========================================================
-    // Menggunakan Intl.DateTimeFormat untuk mengambil angka jam & menit secara murni demi menghindari bug string Vercel
     const formatter = new Intl.DateTimeFormat('id-ID', {
       timeZone: 'Asia/Makassar',
       hour: '2-digit',
@@ -61,14 +60,14 @@ module.exports = async (req, res) => {
       if (part.type === 'minute') currentMinute = parseInt(part.value, 10);
     }
 
-    // Konversi penuh ke menit agar kalkulasi perbandingan jendela waktu akurat
+    // Konversi penuh ke menit
     const totalMenitSekarang = (currentHour * 60) + currentMinute;
 
     let responStatusNodeMCU = ""; 
     let dbStatus = "";            
     let hitungDatabase = false;   
 
-    // --- KONFIGURASI BATAS JENDELA WAKTU AMAN ---
+    // --- JENDELA WAKTU ABSENSI ---
     const m_06_00 = 6 * 60;
     const m_07_15 = (7 * 60) + 15;
     const m_11_00 = 11 * 60;
@@ -96,17 +95,17 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 3. PROSES SIMPAN KE DATABASE
+    // 3. PROSES SIMPAN KE DATABASE (Kolom dikembalikan asli agar tidak crash)
     // ========================================================
     if (hitungDatabase) {
       const queryInsert = `
-        INSERT INTO presensi (uid_tag, status, dibuat_at) 
-        VALUES ($1, $2, NOW() AT TIME ZONE 'Asia/Makassar');
+        INSERT INTO presensi (uid_tag, status) 
+        VALUES ($1, $2);
       `;
       await pool.query(queryInsert, [uid, dbStatus]);
-      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus}) pada ${currentHour}:${currentMinute} WITA`);
+      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
     } else {
-      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen) pada ${currentHour}:${currentMinute} WITA`);
+      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
     }
 
     // ========================================================
