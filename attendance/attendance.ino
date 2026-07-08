@@ -15,7 +15,6 @@
 #define WIFI_PASSWORD "bantuanrakyatmiskinn"
 
 // ===================== IDENTITAS MESIN ABSENSI =====================
-// Sesuaikan dengan nama kelas. Harus sinkron dengan data "kelas" di siswa.json (misal: "TKJ 1")
 const String DEVICE_ID = "AKL";
 
 // URL API Vercel Dashboard
@@ -45,14 +44,12 @@ String sendJsonToVercel(String uid) {
     https.setTimeout(8000); // Batas waktu tunggu respon 8 detik
     https.addHeader("Content-Type", "application/json");
 
-    // Mengirim payload dengan identitas DEVICE_ID yang dinamis sesuai kelas
     String jsonPayload = "{\"device_id\":\"" + DEVICE_ID + "\",\"uid\":\"" + uid + "\"}";
     Serial.println("Kirim Payload: " + jsonPayload);
 
     int httpCode = https.POST(jsonPayload);
     Serial.println("HTTP Code dari Vercel: " + String(httpCode));
 
-    // Menerima semua respon (termasuk status 403 / 404 agar pesan REJECTED terbaca)
     if (httpCode > 0) {
       response = https.getString();
       response.trim();
@@ -73,7 +70,6 @@ void buzzerSukses() {
 }
 
 void buzzerDitolak() {
-  // Bunyi alarm panjang menandakan salah kelas / kartu tidak terdaftar
   tone(BUZZ_PIN, 600); delay(800); noTone(BUZZ_PIN);
 }
 
@@ -89,7 +85,6 @@ void tampilkanStandby() {
 }
 
 // ===================== Parsing JSON Sederhana via String =====================
-
 String ambilNilaiJson(String json, String key) {
   String target = "\"" + key + "\":\"";
   int index = json.indexOf(target);
@@ -148,11 +143,9 @@ void setup() {
 
 // ===================== Main Loop =====================
 void loop() {
-  // Deteksi adanya RFID Card
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
     buzzerSukses();
     
-    // Mengubah UID byte ke format String HEX
     String uidString = "";
     for (byte i = 0; i < rfid.uid.size; i++) {
       if (rfid.uid.uidByte[i] < 0x10) uidString += "0";
@@ -161,11 +154,9 @@ void loop() {
     uidString.toUpperCase();
     Serial.println("\nUID Terbaca: " + uidString);
 
-    // Tampilan proses kirim data di LCD
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Verifikasi...");
 
-    // Mengirimkan data UID ke Vercel API
     String result = sendJsonToVercel(uidString);
     Serial.println("Respon Server Backend: " + result);
 
@@ -173,7 +164,6 @@ void loop() {
     
     if (result != "Kirim Gagal!" && !result.startsWith("HTTP_ERR_")) {
       
-      // Ekstrak parameter penting dari respon JSON Vercel
       String statusAbsen = ambilNilaiJson(result, "status");
       String namaUser    = ambilNilaiJson(result, "name");
       String pesanError  = ambilNilaiJson(result, "message");
@@ -181,50 +171,49 @@ void loop() {
       if (namaUser.length() > 16) namaUser = namaUser.substring(0, 16);
 
       // --- LOGIKA RESPON TAMPILAN & AUDIO ---
-      
       if (statusAbsen == "REJECTED") {
-        lcd.setCursor(0, 0);
-        lcd.print("AKSES DITOLAK!"); 
+        lcd.setCursor(0, 0); lcd.print("AKSES DITOLAK!"); 
         lcd.setCursor(0, 1); lcd.print(pesanError != "" ? pesanError : "Salah Kelas");
         buzzerDitolak(); 
       } 
-      else if (statusAbsen == "MASUK") { // Digabung jadi satu agar aman 
+      else if (statusAbsen == "MASUK") { 
         lcd.setCursor(0, 0); lcd.print("Absen Berhasil!");
         lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
       } 
-
-      else if (statusAbsen == "KELUAR"){
+      else if (statusAbsen == "KELUAR") {
         lcd.setCursor(0, 0); lcd.print(namaUser);
         lcd.setCursor(0, 1); lcd.print("Selamat pulang");
+        buzzerSukses();
       }
       else if (statusAbsen == "TERLAMBAT") {
         lcd.setCursor(0, 0); lcd.print("Tercatat Telat!");
         lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
       }
+      else if (statusAbsen == "SUDAH_ABSEN") {
+        lcd.setCursor(0, 0); lcd.print("Sudah Absen!");
+        lcd.setCursor(0, 1); lcd.print(namaUser);
+        buzzerSukses(); 
+      }
       else {
-        // Fallback jika ada status tidak dikenal dari server
-        lcd.setCursor(0, 0); lcd.print("Diluar jam operasional");
+        lcd.setCursor(0, 0); lcd.print("Diluar Jam Ops");
         lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
       }
 
     } else {
-      // Kondisi jika komunikasi ke backend Vercel putus
       lcd.setCursor(0, 0); lcd.print("Gagal Koneksi");
       lcd.setCursor(0, 1); lcd.print("Hubungi Admin");
       buzzerError();
     }
 
-    // Jeda pembacaan agar user sempat membaca info di layar LCD
     delay(3500);
     tampilkanStandby();
 
-    // Hentikan komunikasi crypto kartu saat ini agar tidak membaca berulang-ulang
     rfid.PICC_HaltA();
     rfid.PCD_StopCrypto1();
   }
   
-  yield(); // Amankan modul dari tumpukan instruksi watchdog ESP8266
+  yield(); 
 }
