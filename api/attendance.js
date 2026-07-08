@@ -42,24 +42,33 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 2. LOGIKA PENENTUAN WAKTU AKURAT (Zona Waktu WITA)
+    // 2. LOGIKA PENENTUAN WAKTU SECARA AMAN (Zona Waktu WITA)
     // ========================================================
-    const options = { timeZone: 'Asia/Makassar', hour: '2-digit', minute: '2-digit', hour12: false };
-    const timeString = new Date().toLocaleTimeString('id-ID', options); // Format "HH:MM" (Misal "07:25")
+    // Menggunakan Intl.DateTimeFormat untuk mengambil angka jam & menit secara murni demi menghindari bug string Vercel
+    const formatter = new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Makassar',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
     
-    const parts = timeString.split(/[.:]/);
-    const currentHour = parseInt(parts[0], 10);
-    const currentMinute = parseInt(parts[1], 10);
-    
-    // Mengubah jam & menit saat ini menjadi total menit dalam sehari agar mudah dibandingkan
-    // Contoh: Jam 07:15 = (7 * 60) + 15 = 435 menit
+    const parts = formatter.formatToParts(new Date());
+    let currentHour = 0;
+    let currentMinute = 0;
+
+    for (const part of parts) {
+      if (part.type === 'hour') currentHour = parseInt(part.value, 10);
+      if (part.type === 'minute') currentMinute = parseInt(part.value, 10);
+    }
+
+    // Konversi penuh ke menit agar kalkulasi perbandingan jendela waktu akurat
     const totalMenitSekarang = (currentHour * 60) + currentMinute;
 
-    let responStatusNodeMCU = ""; // Status teks yang dikirim ke LCD NodeMCU [cite: 30]
-    let dbStatus = "";            // Nilai ENUM yang dimasukkan ke Supabase ('IN' atau 'OUT')
-    let hitungDatabase = false;   // Flag apakah data perlu dimasukkan ke DB atau tidak
+    let responStatusNodeMCU = ""; 
+    let dbStatus = "";            
+    let hitungDatabase = false;   
 
-    // --- PENGATURAN JENDELA WAKTU ABSENSI ---
+    // --- KONFIGURASI BATAS JENDELA WAKTU AMAN ---
     const m_06_00 = 6 * 60;
     const m_07_15 = (7 * 60) + 15;
     const m_11_00 = 11 * 60;
@@ -67,31 +76,27 @@ module.exports = async (req, res) => {
     const m_18_00 = 18 * 60;
 
     if (totalMenitSekarang >= m_06_00 && totalMenitSekarang < m_07_15) {
-      // Sesi 1: Absen Masuk Tepat Waktu
       responStatusNodeMCU = "MASUK";
       dbStatus = "IN";
       hitungDatabase = true;
     } 
     else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_11_00) {
-      // Sesi 2: Absen Masuk Terlambat
       responStatusNodeMCU = "TERLAMBAT";
       dbStatus = "IN";
       hitungDatabase = true;
     } 
     else if (totalMenitSekarang >= m_14_30 && totalMenitSekarang < m_18_00) {
-      // Sesi 3: Absen Pulang
       responStatusNodeMCU = "KELUAR";
       dbStatus = "OUT";
       hitungDatabase = true;
     } 
     else {
-      // Sesi 4: Di luar jam operasional (Siang bolong atau tengah malam)
       responStatusNodeMCU = "DILUAR_JAM";
-      hitungDatabase = false; // Kunci agar tidak memenuhi baris database kosong
+      hitungDatabase = false; 
     }
 
     // ========================================================
-    // 3. PROSES SIMPAN KE DATABASE (Jika masuk dalam jendela absen)
+    // 3. PROSES SIMPAN KE DATABASE
     // ========================================================
     if (hitungDatabase) {
       const queryInsert = `
@@ -99,16 +104,16 @@ module.exports = async (req, res) => {
         VALUES ($1, $2, NOW() AT TIME ZONE 'Asia/Makassar');
       `;
       await pool.query(queryInsert, [uid, dbStatus]);
-      console.log(`[POSTGRES] Terbaca: ${namaSiswa} -> Simpan Status DB: ${dbStatus}`);
+      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus}) pada ${currentHour}:${currentMinute} WITA`);
     } else {
-      console.log(`[POSTGRES] Terbaca: ${namaSiswa} -> Diabaikan (Diluar Jam Operasional)`);
+      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen) pada ${currentHour}:${currentMinute} WITA`);
     }
 
     // ========================================================
-    // 4. RESPONS BALIK KE NODE MCU (Menyesuaikan if-else di .ino kamu)
+    // 4. RESPONS BALIK KE NODEMCU
     // ========================================================
     return res.status(200).json({
-      status: responStatusNodeMCU, // Mengirim "MASUK", "TERLAMBAT", "KELUAR", atau "DILUAR_JAM" [cite: 30]
+      status: responStatusNodeMCU, 
       name: namaSiswa
     });
 
