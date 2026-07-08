@@ -79,7 +79,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "REJECTED", name: namaSiswa, message: "Salah Kelas" });
     }
 
-    // ========================================================
+// ========================================================
     // 3. PROSES VALIDASI GANDA & SIMPAN KE DATABASE
     // ========================================================
     if (hitungDatabase) {
@@ -88,12 +88,12 @@ module.exports = async (req, res) => {
       const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
       const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`;
 
-      // PENTING: Ganti "waktu" di bawah ini dengan nama kolom tabelmu (misal: created_at) jika error!
+      // Menggunakan 'created_at' sebagai contoh kolom timestamp default PostgreSQL/Supabase
       const queryCekAbsen = `
         SELECT id FROM presensi 
         WHERE uid_tag = $1 
           AND status = $2 
-          AND (waktu AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
+          AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
         LIMIT 1;
       `;
 
@@ -106,8 +106,9 @@ module.exports = async (req, res) => {
         });
       }
 
-      const queryInsert = `INSERT INTO presensi (uid_tag, status) VALUES ($1, $2);`;
-      await pool.query(queryInsert, [uid, dbStatus]);
+      // Menambahkan nama_siswa agar data di tabel presensi lebih informatif saat direkap
+      const queryInsert = `INSERT INTO presensi (uid_tag, status, nama_siswa) VALUES ($1, $2, $3);`;
+      await pool.query(queryInsert, [uid, dbStatus, namaSiswa]);
     }
 
     // ========================================================
