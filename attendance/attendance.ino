@@ -11,15 +11,15 @@
 #define BUZZ_PIN  D8   // Pin D8 (GPIO15)
 
 // ===================== Konfigurasi WiFi =====================
-#define WIFI_SSID     "duno"
-#define WIFI_PASSWORD "23571113"
+#define WIFI_SSID     "Nggonku"
+#define WIFI_PASSWORD "bantuanrakyatmiskinn"
 
 // ===================== IDENTITAS MESIN ABSENSI =====================
 // Sesuaikan dengan nama kelas. Harus sinkron dengan data "kelas" di siswa.json (misal: "TKJ 1")
-const String DEVICE_ID = "TKJ 2";
+const String DEVICE_ID = "AKL";
 
 // URL API Vercel Dashboard
-String vercel_api_url = "https://attendance-airlangga.vercel.app/api/attendance";
+String vercel_api_url = "https://attendance-erlangga.vercel.app/api/attendance";
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2); 
@@ -36,7 +36,7 @@ String sendJsonToVercel(String uid) {
   }
 
   std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
-  client->setInsecure(); // Mengabaikan validasi SSL fingerprint
+  client->setInsecure(); 
 
   HTTPClient https;
   String response = "Kirim Gagal!";
@@ -89,6 +89,7 @@ void tampilkanStandby() {
 }
 
 // ===================== Parsing JSON Sederhana via String =====================
+
 String ambilNilaiJson(String json, String key) {
   String target = "\"" + key + "\":\"";
   int index = json.indexOf(target);
@@ -183,32 +184,29 @@ void loop() {
       // --- LOGIKA RESPON TAMPILAN & AUDIO ---
       
       if (statusAbsen == "REJECTED") {
-        // KONDISI 1: Kartu ditolak (Salah kelas atau tidak terdaftar)
-        lcd.setCursor(0, 0); lcd.print("AKSES DITOLAK!");
+        lcd.setCursor(0, 0);
+        lcd.print("AKSES DITOLAK!"); 
         lcd.setCursor(0, 1); lcd.print(pesanError != "" ? pesanError : "Salah Kelas");
-        buzzerDitolak();
+        buzzerDitolak(); 
       } 
-      else if (statusAbsen == "MASUK") {
-        // KONDISI 2: Berhasil Absen Masuk (Siswa / Guru)
-        lcd.setCursor(0, 1); lcd.print(namaUser);
+      else if (statusAbsen == "MASUK") { // Digabung jadi satu agar aman 
         lcd.setCursor(0, 0); lcd.print("Absen Berhasil!");
-        buzzerSukses();
-      } 
-      else if (statusAbsen == "KELUAR") {
-        // KONDISI 3: Berhasil Absen Pulang
         lcd.setCursor(0, 1); lcd.print(namaUser);
-        lcd.setCursor(0, 0); lcd.print("Selamat Pulang!");
         buzzerSukses();
       } 
+
+      else if (statusAbsen == "KELUAR"){
+        lcd.setCursor(0, 0); lcd.print(namaUser);
+        lcd.setCursor(0, 1); lcd.print("Selamat pulang");
+      }
       else if (statusAbsen == "TERLAMBAT") {
-        // KONDISI 4: Terlambat Masuk
-        lcd.setCursor(0, 1); lcd.print(namaUser);
         lcd.setCursor(0, 0); lcd.print("Tercatat Telat!");
+        lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
       }
       else {
-        // KONDISI 5: Penanganan di luar jam operasional
-        lcd.setCursor(0, 0); lcd.print("Diluar Jam Operasional");
+        // Fallback jika ada status tidak dikenal dari server
+        lcd.setCursor(0, 0); lcd.print("Diluar jam operasional");
         lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
       }
