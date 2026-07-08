@@ -1,11 +1,10 @@
 const { Pool } = require('pg');
 
-// Optimasi Pool untuk Serverless Lingkungan (mencegah kebanjiran koneksi di Supabase)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 2,             // Maksimal koneksi per instance serverless
-  idleTimeoutMillis: 5000 // Segera putuskan koneksi idle agar bisa dipakai instance lain
+  max: 2,             
+  idleTimeoutMillis: 5000 
 });
 
 module.exports = async (req, res) => {
@@ -21,7 +20,7 @@ module.exports = async (req, res) => {
     if (!uid) return res.status(400).json({ error: 'Parameter UID tidak ditemukan.' });
 
     // ========================================================
-    // OPTIMASI 1: LOGIKA WAKTU DIBAWA KE ATAS (EARLY EXIT)
+    // 1. LOGIKA WAKTU (EARLY EXIT)
     // ========================================================
     const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
     const currentHour = targetTime.getUTCHours();
@@ -58,7 +57,7 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // OPTIMASI 2: VERIFIKASI SISWA & KELAS (Hanya berjalan jika jamnya tepat)
+    // 2. VERIFIKASI SISWA & KELAS 
     // ========================================================
     const resultSiswa = await pool.query(`
       SELECT s.nama_siswa, k.nama_kelas 
@@ -73,7 +72,7 @@ module.exports = async (req, res) => {
 
     const { nama_siswa: namaSiswa, nama_kelas: kelasSiswa } = resultSiswa.rows[0];
 
-    // PENGAMAN KELAS (Regex dioptimalkan)
+    // PENGAMAN KELAS
     const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
     const kelasClean = kelasSiswa.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (deviceClean !== kelasClean) {
@@ -81,46 +80,38 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 3. PROSES VALIDASI & SIMPAN KE DATABASE
+    // 3. PROSES VALIDASI GANDA & SIMPAN KE DATABASE
     // ========================================================
     if (hitungDatabase) {
-      
-      // Ambil tanggal hari ini dalam format YYYY-MM-DD sesuai zona waktu WITA
       const tahun = targetTime.getUTCFullYear();
       const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
       const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
       const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`;
 
-      // QUERY CEK: Apakah siswa ini sudah melakukan absen dengan status yang sama HARI INI?
+      // PENTING: Ganti "waktu" di bawah ini dengan nama kolom tabelmu (misal: created_at) jika error!
       const queryCekAbsen = `
         SELECT id FROM presensi 
         WHERE uid_tag = $1 
           AND status = $2 
           AND (waktu AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
         LIMIT 1;
-      `; [cite: 2]
+      `;
 
       const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
 
       if (resultCek.rows.length > 0) {
-        // Jika sudah pernah tap untuk sesi ini (IN atau OUT) hari ini, kunci!
         return res.status(200).json({
-          status: "SUDAH_ABSEN", // Status ini akan dibaca oleh NodeMCU 
+          status: "SUDAH_ABSEN", 
           name: namaSiswa
         });
       }
 
-      // Jika belum pernah absen sesi ini, baru lakukan INSERT
       const queryInsert = `INSERT INTO presensi (uid_tag, status) VALUES ($1, $2);`;
       await pool.query(queryInsert, [uid, dbStatus]);
-      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
-
-    } else {
-      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
     }
 
     // ========================================================
-    // 4. RESPONS BALIK KE NODEMCU
+    // 4. RESPONS BALIK
     // ========================================================
     return res.status(200).json({
       status: responStatusNodeMCU, 
@@ -129,6 +120,6 @@ module.exports = async (req, res) => {
 
   } catch (error) {
     console.error("[ERROR] Sistem backend gagal:", error);
-    return res.status(500).send("SERVER_ERROR");
+    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
   }
 };
