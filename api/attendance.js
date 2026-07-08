@@ -61,7 +61,7 @@ module.exports = async (req, res) => {
     }
 
     // Konversi penuh ke menit
-    const totalMenitSekarang = 900;
+    const totalMenitSekarang = (currentHour * 60) + currentMinute;
 
     let responStatusNodeMCU = ""; 
     let dbStatus = "";            
