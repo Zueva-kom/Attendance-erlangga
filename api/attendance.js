@@ -79,12 +79,12 @@ module.exports = async (req, res) => {
       dbStatus = "IN";
       hitungDatabase = true;
     } 
-    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_11_00) {
+    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_15_59) {
       responStatusNodeMCU = "TERLAMBAT";
       dbStatus = "IN";
       hitungDatabase = true;
     } 
-    else if (totalMenitSekarang >= m_14_30 && totalMenitSekarang < m_18_00) {
+    else if (totalMenitSekarang >= m_16_00 && totalMenitSekarang < m_19_00) {
       responStatusNodeMCU = "KELUAR";
       dbStatus = "OUT";
       hitungDatabase = true;
