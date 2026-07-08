@@ -15,9 +15,9 @@ module.exports = async (req, res) => {
 
   try {
     const { device_id, uid } = req.body; 
-    if (!uid) return res.status(400).json({ error: 'Parameter UID tidak ditemukan.' });
+    if (!uid || !device_id) return res.status(400).json({ error: 'Parameter tidak lengkap.' });
 
-    // 1. VERIFIKASI SISWA & KELAS (Supabase)
+    // 1. VERIFIKASI SISWA & KELAS
     const querySiswa = `
       SELECT s.nama_siswa, k.nama_kelas 
       FROM siswa s
@@ -30,9 +30,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "REJECTED", name: "Unknown", message: "Tidak Terdaftar" });
     }
 
-    const siswa = resultSiswa.rows[0];
-    const namaSiswa = siswa.nama_siswa;
-    const kelasSiswa = siswa.nama_kelas; 
+    const { nama_siswa: namaSiswa, nama_kelas: kelasSiswa } = resultSiswa.rows[0];
 
     // PENGAMAN KELAS
     const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -60,19 +58,18 @@ module.exports = async (req, res) => {
       if (part.type === 'minute') currentMinute = parseInt(part.value, 10);
     }
 
-    // Konversi penuh ke menit
     const totalMenitSekarang = (currentHour * 60) + currentMinute;
 
-    let responStatusNodeMCU = ""; 
+    let responStatusNodeMCU = "DILUAR_JAM"; 
     let dbStatus = "";            
     let hitungDatabase = false;   
 
-    // --- JENDELA WAKTU ABSENSI ---
+    // --- DEKLARASI JENDELA WAKTU (SUDAH DIPERBAIKI) ---
     const m_06_00 = 6 * 60;
     const m_07_15 = (7 * 60) + 15;
-    const m_11_00 = 11 * 60;
-    const m_14_30 = (14 * 60) + 30;
-    const m_18_00 = 18 * 60;
+    const m_15_59 = (15 * 60) + 59;
+    const m_16_00 = 16 * 60;
+    const m_19_00 = 19 * 60;
 
     if (totalMenitSekarang >= m_06_00 && totalMenitSekarang < m_07_15) {
       responStatusNodeMCU = "MASUK";
@@ -89,26 +86,21 @@ module.exports = async (req, res) => {
       dbStatus = "OUT";
       hitungDatabase = true;
     } 
-    else {
-      responStatusNodeMCU = "DILUAR_JAM";
-      hitungDatabase = false; 
-    }
 
-// ========================================================
-// 3. PROSES SIMPAN KE DATABASE 
-// ========================================================
-if (hitungDatabase) {
-  // Ubah query INSERT di bawah ini:
-  const queryInsert = `
-    INSERT INTO presensi (uid_tag, status, nama_siswa) 
-    VALUES ($1, $2, $3);
-  `;
-  // Tambahkan namaSiswa ke dalam array parameter ($3)
-  await pool.query(queryInsert, [uid, dbStatus, namaSiswa]);
-  console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
-} else {
-  console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
-}
+    // ========================================================
+    // 3. PROSES SIMPAN KE DATABASE 
+    // ========================================================
+    if (hitungDatabase) {
+      // OPSI OPTIMASI: Anda bisa menambahkan pengecekan data duplikat di sini sebelum INSERT
+      const queryInsert = `
+        INSERT INTO presensi (uid_tag, status, nama_siswa) 
+        VALUES ($1, $2, $3);
+      `;
+      await pool.query(queryInsert, [uid, dbStatus, namaSiswa]);
+      console.log(`[POSTGRES] ${namaSiswa} -> Berhasil Simpan DB (${dbStatus})`);
+    } else {
+      console.log(`[POSTGRES] ${namaSiswa} -> Diabaikan (Diluar jam absen)`);
+    }
 
     // ========================================================
     // 4. RESPONS BALIK KE NODEMCU
