@@ -18,44 +18,31 @@ module.exports = async (req, res) => {
   try {
     const { device_id, uid } = req.body; 
     if (!uid) return res.status(400).json({ error: 'Parameter UID tidak ditemukan.' });
-
-    // ========================================================
-    // 1. LOGIKA WAKTU (EARLY EXIT)
+// ========================================================
+    // 1. LOGIKA WAKTU (MODUL TESTING - BEBAS JAM)
     // ========================================================
     const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
-    const currentHour = targetTime.getUTCHours();
-    const currentMinute = targetTime.getUTCMinutes();
-    const totalMenitSekarang = (currentHour * 60) + currentMinute;
+    
+    // PILIHAN MODE TEST (Ubah string ini sesuai kebutuhan tes Anda):
+    // "MASUK"     -> Simulasi jam masuk normal
+    // "TERLAMBAT" -> Simulasi siswa terlambat
+    const modeTest = "MASUK"; 
 
     let responStatusNodeMCU = ""; 
     let dbStatus = "";            
-    let hitungDatabase = false;   
+    let hitungDatabase = true; // Selalu true agar data masuk ke DB saat testing
 
-    const m_06_00 = 6 * 60;
-    const m_07_15 = (7 * 60) + 15;
-    const m_11_00 = 11 * 60;
-    const m_14_30 = (14 * 60) + 30;
-    const m_18_00 = 18 * 60;
-
-    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang < m_07_15) {
+    if (modeTest === "MASUK") {
       responStatusNodeMCU = "MASUK";
       dbStatus = "IN";
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_11_00) {
+    } else if (modeTest === "TERLAMBAT") {
       responStatusNodeMCU = "TERLAMBAT";
       dbStatus = "IN";
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_14_30 && totalMenitSekarang < m_18_00) {
+    } else {
+      // Cadangan jika Anda nanti ingin tes "KELUAR"
       responStatusNodeMCU = "KELUAR";
       dbStatus = "OUT";
-      hitungDatabase = true;
-    } 
-    else {
-      return res.status(200).json({ status: "DILUAR_JAM", name: "Siswa" });
     }
-
 // ========================================================
 // 2. VERIFIKASI SISWA & KELAS 
 // ========================================================
