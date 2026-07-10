@@ -74,20 +74,20 @@ module.exports = async (req, res) => {
     if (!hitungDatabase) {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
-// ========================================================
-    // 3. PROSES CHECK & INSERT KE DATABASE (SINKRON UTC INDEX)
+
     // ========================================================
-    // SINKRONISASI: Menggunakan getUTCDate() agar tanggalnya pas dengan created_at::date di database
+    // 3. PROSES CHECK & INSERT KE DATABASE (TEKS MURNI)
+    // ========================================================
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
-    // Query pengecekan disesuaikan (Buang AT TIME ZONE agar cocok dengan UNIQUE INDEX baru)
+    // Pengecekan manual tingkat pertama menggunakan perbandingan teks biasa
     const queryCekAbsen = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
-        AND status::text = $2::text 
+        AND status = $2 
         AND created_at::date = $3::date
       LIMIT 1;
     `;
@@ -106,31 +106,25 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     try {
+      // Insert teks murni tanpa casting ::status_absen
       const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3::text::status_absen, $4);
+        VALUES ($1, $2, $3, $4);
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
     } catch (dbError) {
-      // Jika terjadi tabrakan request dalam milidetik, UNIQUE INDEX di database akan menolak 
-      // dan melempar kode error 23505 (Unique Violation)
+      // Tingkat kedua: Jika tabrakan request dalam hitungan milidetik lolos dari kueri cek,
+      // Unique Index database akan menangkapnya dan melempar eror code 23505
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
-      
-      // Fallback aman jika tipe enum status_absen belum sepenuhnya matang di skema DB Anda
-      try {
-        const queryFallback = `
-          INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-          VALUES ($1, $2, $3, $4);
-        `;
-        await pool.query(queryFallback, [uid, idKelasSiswa, dbStatus, waktuString]);
-      } catch (fallbackError) {
-        if (fallbackError.code === '23505') {
-          return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-        }
-        throw fallbackError;
-      }
+      throw dbError; 
     }
 
     return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+
+  } catch (error) {
+    console.error("[ERROR] Sistem backend gagal:", error);
+    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
+  }
+};
