@@ -80,36 +80,36 @@ module.exports = async (req, res) => {
     if (!hitungDatabase) {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
-
 // ========================================================
-    // 3. PROSES CHECK & ANTI-DUPLIKASI (KHUSUS TIMESTAMP TANPA TZ)
+    // 3. PROSES CHECK & ANTI-DUPLIKASI (TOTAL BLOCKING)
     // ========================================================
 
-    // 1. CEK PERTAMA: Apakah sudah tap dengan status yang SAMA hari ini (WITA)?
-    // Kita bandingkan date dari created_at langsung dengan tanggal hari ini di Makassar
-    const queryCekStatusSama = `
-      SELECT uid_tag FROM presensis 
-      WHERE uid_tag = $1 
-        AND status = $2 
-        AND created_at::date = (NOW() AT TIME ZONE 'Asia/Makassar')::date
-      LIMIT 1;
-    `;
-    const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus]);
-
-    if (resultCekStatus.rows.length > 0) {
-      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-    }
-
-    // 2. CEK KEDUA: Hitung total absensi siswa tersebut pada hari ini (WITA)
+    // 1. CEK TOTAL ABSENSI HARI INI
+    // Menghitung berapa kali siswa ini sudah tap pada tanggal hari ini (WITA)
     const queryHitungTotalHariIni = `
-      SELECT COUNT(*) as total FROM presensis
+      SELECT COUNT(*) as total, 
+             MAX(status) as status_terakhir
+      FROM presensis
       WHERE uid_tag = $1
         AND created_at::date = (NOW() AT TIME ZONE 'Asia/Makassar')::date;
     `;
     const resultHitung = await pool.query(queryHitungTotalHariIni, [uid]);
     const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
+    const statusTerakhir = resultHitung.rows[0].status_terakhir;
 
+    // JIKA SUDAH ABSEN 2 KALI ATAU LEBIH, LANGSUNG TOLAK
     if (totalAbsenHariIni >= 2) {
+      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+    }
+
+    // 2. CEK BLOKIR DOUBLE TAP BERDASARKAN ATURAN WAKTU
+    // Jika saat ini statusnya adalah "IN" (Masuk/Terlambat), dan dia SUDAH pernah melakukan "IN" hari ini, maka BLOKIR.
+    if (dbStatus === "IN" && totalAbsenHariIni > 0 && statusTerakhir === "IN") {
+      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+    }
+
+    // Jika saat ini statusnya adalah "OUT" (Pulang), dan dia SUDAH pernah melakukan "OUT" hari ini, maka BLOKIR.
+    if (dbStatus === "OUT" && statusTerakhir === "OUT") {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
 
