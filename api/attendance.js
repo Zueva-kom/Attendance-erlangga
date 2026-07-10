@@ -75,7 +75,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
-// ========================================================
+    // ========================================================
     // 3. PROSES CHECK & INSERT KE DATABASE (MAKS 2 KALI SEHARI)
     // ========================================================
     const tahun = targetTime.getUTCFullYear();
@@ -84,12 +84,11 @@ module.exports = async (req, res) => {
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
     // 1. CEK PERTAMA: Apakah siswa sudah pernah tap dengan status yang SAMA hari ini?
-    // (Mencegah IN dua kali atau OUT dua kali)
     const queryCekStatusSama = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
         AND status = $2 
-        AND created_at::date = $3::date
+        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
       LIMIT 1;
     `;
     const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus, tanggalHariIni]);
@@ -99,16 +98,14 @@ module.exports = async (req, res) => {
     }
 
     // 2. CEK KEDUA: Hitung total absensi siswa tersebut pada hari ini
-    // (Mencegah inputan ketiga, keempat, dst)
     const queryHitungTotalHariIni = `
       SELECT COUNT(*) as total FROM presensis
       WHERE uid_tag = $1
-        AND created_at::date = $2::date;
+        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $2::date;
     `;
     const resultHitung = await pool.query(queryHitungTotalHariIni, [uid, tanggalHariIni]);
     const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
 
-    // Jika total baris data hari ini sudah mencapai 2 atau lebih, langsung tolak
     if (totalAbsenHariIni >= 2) {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
@@ -128,12 +125,17 @@ module.exports = async (req, res) => {
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
     } catch (dbError) {
-      // Jika lolos dari cek kueri di atas karena request masuk berbarengan,
-      // Unique Index database akan menangkapnya dan melempar error code 23505
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
       throw dbError; 
     }
 
+    // --- BAGIAN 4 (RESPONS SUKSES) ---
     return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+
+  } catch (error) {
+    console.error("[ERROR] Sistem backend gagal:", error);
+    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
+  }
+};
