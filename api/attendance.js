@@ -35,7 +35,7 @@ module.exports = async (req, res) => {
 
     const { nama_siswa: namaSiswa, nama_kelas: kelasSiswa } = resultSiswa.rows[0];
 
-    // PENGAMAN KELAS (Mencocokkan DEVICE_ID dengan nama_kelas)
+    // PENGAMAN KELAS
     const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
     const kelasClean = kelasSiswa.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (deviceClean !== kelasClean) {
@@ -43,7 +43,7 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN
+    // 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN (14:31 - 19:00)
     // ========================================================
     const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
     const currentHour = targetTime.getUTCHours();
@@ -56,51 +56,45 @@ module.exports = async (req, res) => {
 
     const m_06_00 = 6 * 60;
     const m_07_15 = (7 * 60) + 15;
-    const m_14_30 = (14 * 60) + 30; // Batas TERLAMBAT selesai, sekaligus KELUAR dimulai
-    const m_18_00 = 18 * 60;
+    const m_14_30 = (14 * 60) + 30; // 14:30 batas akhir TERLAMBAT
+    const m_14_31 = (14 * 60) + 31; // 14:31 awal KELUAR
+    const m_19_00 = 19 * 60;        // 19:00 akhir KELUAR
 
-    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang < m_07_15) {
-      responStatusNodeMCU = "MASUK";
+    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang <= m_14_30) {
+      // Jam 06:00 sampai 07:14 masuk MASUK, sisanya sampai 14:30 masuk TERLAMBAT
+      responStatusNodeMCU = totalMenitSekarang < m_07_15 ? "MASUK" : "TERLAMBAT";
       dbStatus = "IN";
       hitungDatabase = true;
     } 
-    // Mengubah batas akhir TERLAMBAT langsung ke 14:30
-    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_14_30) {
-      responStatusNodeMCU = "TERLAMBAT";
-      dbStatus = "IN";
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_14_30 && totalMenitSekarang < m_18_00) {
+    else if (totalMenitSekarang >= m_14_31 && totalMenitSekarang < m_19_00) {
       responStatusNodeMCU = "KELUAR";
       dbStatus = "OUT";
       hitungDatabase = true;
     } 
 
-    // Jika di luar jam operasional sekolah (di bawah jam 6 pagi atau di atas jam 6 sore)
     if (!hitungDatabase) {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
     // ========================================================
-    // 3. PROSES VALIDASI GANDA (BATAS 1x IN DAN 1x OUT)
+    // 3. PROSES VALIDASI GANDA (UPGRADE QUERY BIAR TIDAK JEBOL)
     // ========================================================
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
-    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`;
+    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; // Format: YYYY-MM-DD
 
-    // KUNCI PENGAMAN: Mencari apakah dbStatus (IN atau OUT) saat ini sudah pernah tersimpan hari ini
+    // PERBAIKAN: Query ini sekarang memaksa pembandingan tanggal murni (DATE) di zona Asia/Makassar
     const queryCekAbsen = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
         AND status = $2 
-        AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')::date = $3::date
+        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
       LIMIT 1;
     `;
 
     const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
 
-    // Jika sudah pernah absen untuk status yang sama hari ini, langsung tolak!
     if (resultCek.rows.length > 0) {
       return res.status(200).json({
         status: "SUDAH_ABSEN", 
@@ -108,7 +102,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Ambil id_kelas untuk keperluan data foreign key
+    // Ambil id_kelas untuk insert
     const resKelasSiswa = await pool.query(`SELECT id_kelas FROM siswas WHERE uid_tag = $1 LIMIT 1;`, [uid]);
     const idKelasSiswa = resKelasSiswa.rows[0].id_kelas;
 
@@ -116,16 +110,12 @@ module.exports = async (req, res) => {
     const menitLokal = String(targetTime.getUTCMinutes()).padStart(2, '0');
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
-    // Simpan data log presensi 
     const queryInsert = `
       INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
       VALUES ($1, $2, $3, $4);
     `;
     await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
 
-    // ========================================================
-    // 4. RESPONS BALIK SUCCESS
-    // ========================================================
     return res.status(200).json({
       status: responStatusNodeMCU, 
       name: namaSiswa
