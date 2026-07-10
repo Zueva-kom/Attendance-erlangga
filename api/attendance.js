@@ -76,30 +76,27 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
+// ========================================================
+    // 3. PROSES CHECK & INSERT KE DATABASE (DENGAN COERCION ENUM)
     // ========================================================
-    // 3. PROSES VALIDASI GANDA (UPGRADE QUERY BIAR TIDAK JEBOL)
-    // ========================================================
+    // PERBAIKAN: Menggunakan getUTCDate agar sinkron dengan (created_at::date) di database
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
-    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; // Format: YYYY-MM-DD
+    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
-    // PERBAIKAN: Query ini sekarang memaksa pembandingan tanggal murni (DATE) di zona Asia/Makassar
+    // Query cek disesuaikan dengan menghilangkan AT TIME ZONE agar match dengan Unique Index baru
     const queryCekAbsen = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
-        AND status = $2 
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
+        AND status = $2::status_absen 
+        AND created_at::date = $3::date
       LIMIT 1;
     `;
-
     const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
 
     if (resultCek.rows.length > 0) {
-      return res.status(200).json({
-        status: "SUDAH_ABSEN", 
-        name: namaSiswa
-      });
+      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
 
     // Ambil id_kelas untuk insert
@@ -110,19 +107,17 @@ module.exports = async (req, res) => {
     const menitLokal = String(targetTime.getUTCMinutes()).padStart(2, '0');
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
-    const queryInsert = `
-      INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-      VALUES ($1, $2, $3, $4);
-    `;
-    await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
-
-    return res.status(200).json({
-      status: responStatusNodeMCU, 
-      name: namaSiswa
-    });
-
-  } catch (error) {
-    console.error("[ERROR] Sistem backend gagal:", error);
-    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
-  }
-};
+    try {
+      // Insert data (Casting string ke ::status_absen)
+      const queryInsert = `
+        INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
+        VALUES ($1, $2, $3::status_absen, $4);
+      `;
+      await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
+    } catch (dbError) {
+      // Jika terjadi tabrakan milidetik (concurrency), database langsung melempar eror kode 23505
+      if (dbError.code === '23505') {
+        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+      }
+      throw dbError; 
+    }
