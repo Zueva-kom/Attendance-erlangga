@@ -81,31 +81,31 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
-    // ========================================================
-    // 3. PROSES CHECK & ANTI-DUPLIKASI
+// ========================================================
+    // 3. PROSES CHECK & ANTI-DUPLIKASI (FULL POSTGRESQL TIMEZONE)
     // ========================================================
 
-    // 1. CEK PERTAMA: Apakah sudah tap dengan status yang SAMA hari ini?
+    // 1. CEK PERTAMA: Apakah sudah tap dengan status yang SAMA hari ini (WITA)?
     const queryCekStatusSama = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
         AND status = $2 
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
+        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Makassar')::date
       LIMIT 1;
     `;
-    const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus, tanggalHariIni]);
+    const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus]);
 
     if (resultCekStatus.rows.length > 0) {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
 
-    // 2. CEK KEDUA: Jika ingin membatasi total tap harian max 2 kali (1 IN, 1 OUT)
+    // 2. CEK KEDUA: Hitung total absensi siswa tersebut pada hari ini (WITA)
     const queryHitungTotalHariIni = `
       SELECT COUNT(*) as total FROM presensis
       WHERE uid_tag = $1
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $2::date;
+        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Makassar')::date;
     `;
-    const resultHitung = await pool.query(queryHitungTotalHariIni, [uid, tanggalHariIni]);
+    const resultHitung = await pool.query(queryHitungTotalHariIni, [uid]);
     const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
 
     if (totalAbsenHariIni >= 2) {
