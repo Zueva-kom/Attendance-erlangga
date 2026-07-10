@@ -76,18 +76,18 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 3. PROSES CHECK & INSERT KE DATABASE
+    // 3. PROSES CHECK & INSERT KE DATABASE (DENGAN COERCION AMAN)
     // ========================================================
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
-    // Perbaikan casting ($2::text::status_absen) agar string dibaca sempurna oleh ENUM postgres
+    // Menggunakan pembandingan text murni agar aman dari masalah hilangnya tipe enum objek
     const queryCekAbsen = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
-        AND status = $2::text::status_absen 
+        AND status::text = $2::text 
         AND created_at::date = $3::date
       LIMIT 1;
     `;
@@ -106,17 +106,26 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     try {
+      // Dinamis: Deteksi tipe data kolom status saat runtime untuk menghindari crash jika enum belum siap
       const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
         VALUES ($1, $2, $3::text::status_absen, $4);
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
     } catch (dbError) {
-      // Jika terjadi balapan request (concurrency), ditangkap aman oleh unique index database
-      if (dbError.code === '23505') {
+      // Jika error ENUM dtemukan (karena tipe data belum dibuat), gunakan fallback penulisan text biasa
+      if (dbError.message.includes('status_absen') || dbError.code === '42704') {
+        const queryFallback = `
+          INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
+          VALUES ($1, $2, $3, $4);
+        `;
+        await pool.query(queryFallback, [uid, idKelasSiswa, dbStatus, waktuString]);
+      } else if (dbError.code === '23505') {
+        // Jika tertangkap oleh pengunci Unique Index
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+      } else {
+        throw dbError;
       }
-      throw dbError; 
     }
 
     return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
