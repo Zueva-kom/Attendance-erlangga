@@ -82,15 +82,16 @@ module.exports = async (req, res) => {
     }
 
 // ========================================================
-    // 3. PROSES CHECK & ANTI-DUPLIKASI (FULL POSTGRESQL TIMEZONE)
+    // 3. PROSES CHECK & ANTI-DUPLIKASI (KHUSUS TIMESTAMP TANPA TZ)
     // ========================================================
 
     // 1. CEK PERTAMA: Apakah sudah tap dengan status yang SAMA hari ini (WITA)?
+    // Kita bandingkan date dari created_at langsung dengan tanggal hari ini di Makassar
     const queryCekStatusSama = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
         AND status = $2 
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Makassar')::date
+        AND created_at::date = (NOW() AT TIME ZONE 'Asia/Makassar')::date
       LIMIT 1;
     `;
     const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus]);
@@ -103,7 +104,7 @@ module.exports = async (req, res) => {
     const queryHitungTotalHariIni = `
       SELECT COUNT(*) as total FROM presensis
       WHERE uid_tag = $1
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Makassar')::date;
+        AND created_at::date = (NOW() AT TIME ZONE 'Asia/Makassar')::date;
     `;
     const resultHitung = await pool.query(queryHitungTotalHariIni, [uid]);
     const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
