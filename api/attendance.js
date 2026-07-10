@@ -23,7 +23,7 @@ module.exports = async (req, res) => {
     // 1. VERIFIKASI SISWA & KELAS 
     // ========================================================
     const resultSiswa = await pool.query(`
-      SELECT s.nama_siswa, k.nama_kelas 
+      SELECT s.nama_siswa, k.nama_kelas, s.id_kelas
       FROM siswas s
       JOIN kelas k ON s.id_kelas = k.id
       WHERE s.uid_tag = $1 LIMIT 1;
@@ -33,7 +33,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "REJECTED", name: "Unknown", message: "Tidak Terdaftar" });
     }
 
-    const { nama_siswa: namaSiswa, nama_kelas: kelasSiswa } = resultSiswa.rows[0];
+    const { nama_siswa: namaSiswa, nama_kelas: kelasSiswa, id_kelas: idKelasSiswa } = resultSiswa.rows[0];
 
     // PENGAMAN KELAS
     const deviceClean = device_id.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -43,18 +43,12 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN (FIXED TIMEZONE)
+    // 2. LOGIKA WAKTU JENDELA ABSEN
     // ========================================================
-    // Menggunakan opsi numerik 2-digit agar format string yang dihasilkan konsisten
-    const opsiWaktu = { timeZone: 'Asia/Makassar', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', year: 'numeric', month: '2-digit', day: '2-digit' };
-    const formatter = new Intl.DateTimeFormat('en-US', opsiWaktu); // en-US menjamin output berformat numerik murni
-    const [{ value: bln }, , { value: tgl }, , { value: thn }, , { value: jam }, , { value: mnt }] = formatter.formatToParts(new Date());
-
-    const currentHour = parseInt(jam);
-    const currentMinute = parseInt(mnt);
+    const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
+    const currentHour = targetTime.getUTCHours();
+    const currentMinute = targetTime.getUTCMinutes();
     const totalMenitSekarang = (currentHour * 60) + currentMinute;
-    const tanggalHariIni = `${thn}-${bln}-${tgl}`; // Format standar ISO: YYYY-MM-DD
-    const waktuString = `${jam}:${mnt}`;           // Format jam untuk kolom 'waktu'
 
     let responStatusNodeMCU = ""; 
     let dbStatus = "";            
@@ -80,62 +74,32 @@ module.exports = async (req, res) => {
     if (!hitungDatabase) {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
-// ========================================================
-    // 3. PROSES CHECK & ANTI-DUPLIKASI (TOTAL BLOCKING)
-    // ========================================================
 
-    // 1. CEK TOTAL ABSENSI HARI INI
-    // Menghitung berapa kali siswa ini sudah tap pada tanggal hari ini (WITA)
-    const queryHitungTotalHariIni = `
-      SELECT COUNT(*) as total, 
-             MAX(status) as status_terakhir
-      FROM presensis
-      WHERE uid_tag = $1
-        AND created_at::date = (NOW() AT TIME ZONE 'Asia/Makassar')::date;
-    `;
-    const resultHitung = await pool.query(queryHitungTotalHariIni, [uid]);
-    const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
-    const statusTerakhir = resultHitung.rows[0].status_terakhir;
-
-    // JIKA SUDAH ABSEN 2 KALI ATAU LEBIH, LANGSUNG TOLAK
-    if (totalAbsenHariIni >= 2) {
-      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-    }
-
-    // 2. CEK BLOKIR DOUBLE TAP BERDASARKAN ATURAN WAKTU
-    // Jika saat ini statusnya adalah "IN" (Masuk/Terlambat), dan dia SUDAH pernah melakukan "IN" hari ini, maka BLOKIR.
-    if (dbStatus === "IN" && totalAbsenHariIni > 0 && statusTerakhir === "IN") {
-      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-    }
-
-    // Jika saat ini statusnya adalah "OUT" (Pulang), dan dia SUDAH pernah melakukan "OUT" hari ini, maka BLOKIR.
-    if (dbStatus === "OUT" && statusTerakhir === "OUT") {
-      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-    }
+    const jamLokal = String(currentHour).padStart(2, '0');
+    const menitLokal = String(currentMinute).padStart(2, '0');
+    const waktuString = `${jamLokal}:${menitLokal}`; 
 
     // ========================================================
-    // 4. PROSES INSERT DATA BARU (BAGIAN YANG HILANG)
+    // 3. PROSES INSERT DATA (DILINDUNGI UNIQUE CONSTRAINT)
     // ========================================================
-    // Ambil id_kelas milik siswa untuk disalin ke tabel presensi
-    const resKelasSiswa = await pool.query(`SELECT id_kelas FROM siswas WHERE uid_tag = $1 LIMIT 1;`, [uid]);
-    const idKelasSiswa = resKelasSiswa.rows[0].id_kelas;
-
     try {
       const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
         VALUES ($1, $2, $3, $4);
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
+      
+      // Jika berhasil masuk tanpa crash, kirim respon sukses ke NodeMCU
+      return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+
     } catch (dbError) {
-      // Menangani error jika ada pembatasan unik (Unique Constraint) di database
+      // Perangkap Kode Error 23505 (Unique Violation / Duplikat terdeteksi oleh database)
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
+      // Lempar error lain jika ada masalah koneksi database
       throw dbError; 
     }
-
-    // --- BAGIAN 5 (RESPONS SUKSES) ---
-    return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
 
   } catch (error) {
     console.error("[ERROR] Sistem backend gagal:", error);
