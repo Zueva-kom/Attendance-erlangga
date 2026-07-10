@@ -42,7 +42,7 @@ module.exports = async (req, res) => {
       dbStatus = "IN";
       hitungDatabase = true;
     } 
-    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_11_00) {
+    else if (totalMenitSekarang >= m_07_15 && totalMenitSekarang < m_14_30) {
       responStatusNodeMCU = "TERLAMBAT";
       dbStatus = "IN";
       hitungDatabase = true;
