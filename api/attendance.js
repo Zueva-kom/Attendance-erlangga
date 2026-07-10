@@ -80,37 +80,45 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     // ========================================================
-    // 3. PROSES INSERT / UPDATE DATA (UPSERT DENGAN ON CONFLICT)
+    // 3. PROSES CEK DATA, INSERT ATAU UPDATE
     // ========================================================
-    try {
-      // Menggunakan ekspresi indeks unik (uid_tag, status, (created_at::date)) sebagai target konflik
-      const queryUpsert = `
+    
+    // Cari tahu apakah data siswa dengan status tersebut sudah ada HARI INI
+    const queryCekExist = `
+      SELECT id FROM presensis 
+      WHERE uid_tag = $1 
+        AND status = $2 
+        AND created_at::date = (NOW() AT TIME ZONE 'Asia/Makassar')::date
+      LIMIT 1;
+    `;
+    const resultCek = await pool.query(queryCekExist, [uid, dbStatus]);
+
+    if (resultCek.rows.length > 0) {
+      // DATA SUDAH ADA HARI INI
+      const idExisting = resultCek.rows[0].id;
+
+      if (dbStatus === 'IN') {
+        // Jika pagi hari (IN) digandeng, TOLAK (jangan di-update, biarkan data pertama)
+        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+      } 
+      else if (dbStatus === 'OUT') {
+        // Jika sore hari (OUT) digandeng, UPDATE jam waktunya ke yang paling baru
+        const queryUpdate = `
+          UPDATE presensis 
+          SET waktu = $1, updated_at = NOW() 
+          WHERE id = $2;
+        `;
+        await pool.query(queryUpdate, [waktuString, idExisting]);
+        return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+      }
+    } else {
+      // DATA BELUM ADA HARI INI -> LAKUKAN INSERT BARU
+      const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (uid_tag, status, (created_at::date)) 
-        DO UPDATE SET 
-          waktu = CASE WHEN EXCLUDED.status = 'OUT' THEN EXCLUDED.waktu ELSE presensis.waktu END,
-          updated_at = CASE WHEN EXCLUDED.status = 'OUT' THEN NOW() ELSE presensis.updated_at END
-        RETURNING (xmax = 0) AS is_insert;
+        VALUES ($1, $2, $3, $4);
       `;
-      
-      const resultUpsert = await pool.query(queryUpsert, [uid, idKelasSiswa, dbStatus, waktuString]);
-      const isInsert = resultUpsert.rows[0].is_insert;
-
-      // Jika database melakukan UPDATE (isInsert = false) pada status 'IN', lempar ke perangkap SUDAH_ABSEN
-      if (!isInsert && dbStatus === 'IN') {
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      }
-
-      // Kirim respon sukses ke NodeMCU (baik data baru 'IN'/'OUT' maupun update data 'OUT')
+      await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
       return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
-
-    } catch (dbError) {
-      // Perangkap untuk pelanggaran Unique Constraint umum
-      if (dbError.code === '23505') {
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      }
-      throw dbError; 
     }
 
   } catch (error) {
