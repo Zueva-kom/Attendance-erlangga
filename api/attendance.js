@@ -74,21 +74,20 @@ module.exports = async (req, res) => {
     if (!hitungDatabase) {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
-
-    // ========================================================
-    // 3. PROSES CHECK & INSERT KE DATABASE (DENGAN COERCION AMAN)
+// ========================================================
+    // 3. PROSES CHECK & INSERT KE DATABASE (ZONA WAKTU SINKRON)
     // ========================================================
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
-    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
+    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; // Tanggal format WITA (YYYY-MM-DD)
 
-    // Menggunakan pembandingan text murni agar aman dari masalah hilangnya tipe enum objek
+    // PERBAIKAN UTAMA: Paksa database mengonversi created_at ke Asia/Makassar sebelum membandingkan tanggal
     const queryCekAbsen = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
         AND status::text = $2::text 
-        AND created_at::date = $3::date
+        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
       LIMIT 1;
     `;
     const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
@@ -96,42 +95,3 @@ module.exports = async (req, res) => {
     if (resultCek.rows.length > 0) {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
-
-    // Ambil id_kelas untuk insert
-    const resKelasSiswa = await pool.query(`SELECT id_kelas FROM siswas WHERE uid_tag = $1 LIMIT 1;`, [uid]);
-    const idKelasSiswa = resKelasSiswa.rows[0].id_kelas;
-
-    const jamLokal = String(targetTime.getUTCHours()).padStart(2, '0');
-    const menitLokal = String(targetTime.getUTCMinutes()).padStart(2, '0');
-    const waktuString = `${jamLokal}:${menitLokal}`; 
-
-    try {
-      // Dinamis: Deteksi tipe data kolom status saat runtime untuk menghindari crash jika enum belum siap
-      const queryInsert = `
-        INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3::text::status_absen, $4);
-      `;
-      await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
-    } catch (dbError) {
-      // Jika error ENUM dtemukan (karena tipe data belum dibuat), gunakan fallback penulisan text biasa
-      if (dbError.message.includes('status_absen') || dbError.code === '42704') {
-        const queryFallback = `
-          INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-          VALUES ($1, $2, $3, $4);
-        `;
-        await pool.query(queryFallback, [uid, idKelasSiswa, dbStatus, waktuString]);
-      } else if (dbError.code === '23505') {
-        // Jika tertangkap oleh pengunci Unique Index
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      } else {
-        throw dbError;
-      }
-    }
-
-    return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
-
-  } catch (error) {
-    console.error("[ERROR] Sistem backend gagal:", error);
-    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
-  }
-};
