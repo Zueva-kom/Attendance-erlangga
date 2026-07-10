@@ -80,24 +80,36 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     // ========================================================
-    // 3. PROSES INSERT DATA (DILINDUNGI UNIQUE CONSTRAINT)
+    // 3. PROSES INSERT / UPDATE DATA (UPSERT DENGAN ON CONFLICT)
     // ========================================================
     try {
-      const queryInsert = `
+      // Menggunakan ekspresi indeks unik (uid_tag, status, (created_at::date)) sebagai target konflik
+      const queryUpsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3, $4);
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (uid_tag, status, (created_at::date)) 
+        DO UPDATE SET 
+          waktu = CASE WHEN EXCLUDED.status = 'OUT' THEN EXCLUDED.waktu ELSE presensis.waktu END,
+          updated_at = CASE WHEN EXCLUDED.status = 'OUT' THEN NOW() ELSE presensis.updated_at END
+        RETURNING (xmax = 0) AS is_insert;
       `;
-      await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
       
-      // Jika berhasil masuk tanpa crash, kirim respon sukses ke NodeMCU
+      const resultUpsert = await pool.query(queryUpsert, [uid, idKelasSiswa, dbStatus, waktuString]);
+      const isInsert = resultUpsert.rows[0].is_insert;
+
+      // Jika database melakukan UPDATE (isInsert = false) pada status 'IN', lempar ke perangkap SUDAH_ABSEN
+      if (!isInsert && dbStatus === 'IN') {
+        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+      }
+
+      // Kirim respon sukses ke NodeMCU (baik data baru 'IN'/'OUT' maupun update data 'OUT')
       return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
 
     } catch (dbError) {
-      // Perangkap Kode Error 23505 (Unique Violation / Duplikat terdeteksi oleh database)
+      // Perangkap untuk pelanggaran Unique Constraint umum
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
-      // Lempar error lain jika ada masalah koneksi database
       throw dbError; 
     }
 
