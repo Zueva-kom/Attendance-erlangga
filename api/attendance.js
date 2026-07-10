@@ -50,6 +50,12 @@ module.exports = async (req, res) => {
     const currentMinute = targetTime.getUTCMinutes();
     const totalMenitSekarang = (currentHour * 60) + currentMinute;
 
+    // Membuat string tanggal lokal (YYYY-MM-DD) untuk disimpan ke kolom baru
+    const tahun = targetTime.getUTCFullYear();
+    const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
+    const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
+    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
+
     let responStatusNodeMCU = ""; 
     let dbStatus = "";            
     let hitungDatabase = false;   
@@ -80,37 +86,45 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     // ========================================================
-    // 3. EKSEKUSI UPSERT KE DATABASE
+    // 3. PROSES CEK DATA, INSERT ATAU UPDATE (BERDASARKAN KOLOM TANGGAL)
     // ========================================================
-    try {
-      // Menggunakan kombinasi indeks unik yang kita buat di SQL tadi
-      const queryUpsert = `
-        INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (uid_tag, status, (created_at::date)) 
-        DO UPDATE SET 
-          waktu = CASE WHEN EXCLUDED.status = 'OUT' THEN EXCLUDED.waktu ELSE presensis.waktu END,
-          updated_at = CASE WHEN EXCLUDED.status = 'OUT' THEN (NOW() AT TIME ZONE 'Asia/Makassar') ELSE presensis.updated_at END
-        RETURNING (xmax = 0) AS is_insert;
+    
+    // Sekarang kita filter langsung menggunakan kolom 'tanggal' yang bertipe varchar
+    const queryCekExist = `
+      SELECT id FROM presensis 
+      WHERE uid_tag = $1 
+        AND status = $2 
+        AND tanggal = $3
+      LIMIT 1;
+    `;
+    const resultCek = await pool.query(queryCekExist, [uid, dbStatus, tanggalHariIni]);
+
+    if (resultCek.rows.length > 0) {
+      // DATA SUDAH ADA HARI INI
+      const idExisting = resultCek.rows[0].id;
+
+      if (dbStatus === 'IN') {
+        // Jika statusnya 'IN' (Pagi), abaikan dan kunci (Kirim status SUDAH_ABSEN)
+        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+      } 
+      else if (dbStatus === 'OUT') {
+        // Jika statusnya 'OUT' (Pulang), lakukan UPDATE pada kolom waktu ke menit terbaru
+        const queryUpdate = `
+          UPDATE presensis 
+          SET waktu = $1, updated_at = NOW() 
+          WHERE id = $2;
+        `;
+        await pool.query(queryUpdate, [waktuString, idExisting]);
+        return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+      }
+    } else {
+      // DATA BELUM ADA HARI INI -> LAKUKAN INSERT BARU (Jangan lupa masukkan variabel tanggalHariIni)
+      const queryInsert = `
+        INSERT INTO presensis (uid_tag, id_kelas, status, waktu, tanggal) 
+        VALUES ($1, $2, $3, $4, $5);
       `;
-      
-      const resultUpsert = await pool.query(queryUpsert, [uid, idKelasSiswa, dbStatus, waktuString]);
-      const isInsert = resultUpsert.rows[0].is_insert;
-
-      // Jika terdeteksi melakukan UPDATE pada status IN (pagi hari), batalkan respons sukses
-      if (!isInsert && dbStatus === 'IN') {
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      }
-
-      // Kirim respons berhasil (Bisa INSERT baru atau UPDATE sukses khusus status OUT)
+      await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString, tanggalHariIni]);
       return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
-
-    } catch (dbError) {
-      // Menangkap error code 23505 jika validasi gagal meloloskan data ganda
-      if (dbError.code === '23505') {
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      }
-      throw dbError; 
     }
 
   } catch (error) {
