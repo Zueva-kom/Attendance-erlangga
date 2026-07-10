@@ -43,7 +43,7 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN (14:31 - 19:00)
+    // 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN
     // ========================================================
     const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
     const currentHour = targetTime.getUTCHours();
@@ -56,19 +56,18 @@ module.exports = async (req, res) => {
 
     const m_06_00 = 6 * 60;
     const m_07_15 = (7 * 60) + 15;
-    const m_14_30 = (14 * 60) + 30; // 14:30 batas akhir TERLAMBAT
-    const m_14_31 = (14 * 60) + 31; // 14:31 awal KELUAR
-    const m_19_00 = 19 * 60;        // 19:00 akhir KELUAR
+    const m_14_30 = (14 * 60) + 30; 
+    const m_14_31 = (14 * 60) + 31; 
+    const m_19_00 = 19 * 60;        
 
     if (totalMenitSekarang >= m_06_00 && totalMenitSekarang <= m_14_30) {
-      // Jam 06:00 sampai 07:14 masuk MASUK, sisanya sampai 14:30 masuk TERLAMBAT
       responStatusNodeMCU = totalMenitSekarang < m_07_15 ? "MASUK" : "TERLAMBAT";
-      dbStatus = "IN";
+      dbStatus = "IN"; 
       hitungDatabase = true;
     } 
     else if (totalMenitSekarang >= m_14_31 && totalMenitSekarang < m_19_00) {
       responStatusNodeMCU = "KELUAR";
-      dbStatus = "OUT";
+      dbStatus = "OUT"; 
       hitungDatabase = true;
     } 
 
@@ -76,20 +75,19 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
-// ========================================================
-    // 3. PROSES CHECK & INSERT KE DATABASE (DENGAN COERCION ENUM)
     // ========================================================
-    // PERBAIKAN: Menggunakan getUTCDate agar sinkron dengan (created_at::date) di database
+    // 3. PROSES CHECK & INSERT KE DATABASE
+    // ========================================================
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
-    // Query cek disesuaikan dengan menghilangkan AT TIME ZONE agar match dengan Unique Index baru
+    // Perbaikan casting ($2::text::status_absen) agar string dibaca sempurna oleh ENUM postgres
     const queryCekAbsen = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
-        AND status = $2::status_absen 
+        AND status = $2::text::status_absen 
         AND created_at::date = $3::date
       LIMIT 1;
     `;
@@ -108,16 +106,23 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     try {
-      // Insert data (Casting string ke ::status_absen)
       const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3::status_absen, $4);
+        VALUES ($1, $2, $3::text::status_absen, $4);
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
     } catch (dbError) {
-      // Jika terjadi tabrakan milidetik (concurrency), database langsung melempar eror kode 23505
+      // Jika terjadi balapan request (concurrency), ditangkap aman oleh unique index database
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
       throw dbError; 
     }
+
+    return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+
+  } catch (error) {
+    console.error("[ERROR] Sistem backend gagal:", error);
+    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
+  }
+};
