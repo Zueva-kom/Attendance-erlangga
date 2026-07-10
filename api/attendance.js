@@ -75,25 +75,39 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
-    // ========================================================
-    // 3. PROSES CHECK & INSERT KE DATABASE (TEKS MURNI)
+ // ========================================================
+    // 3. PROSES CHECK & INSERT KE DATABASE (MAKS 2 KALI SEHARI)
     // ========================================================
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
-    // Pengecekan manual tingkat pertama menggunakan perbandingan teks biasa
-    const queryCekAbsen = `
+    // 1. CEK PERTAMA: Apakah siswa sudah pernah tap dengan status yang SAMA hari ini?
+    const queryCekStatusSama = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
         AND status = $2 
         AND created_at::date = $3::date
       LIMIT 1;
     `;
-    const resultCek = await pool.query(queryCekAbsen, [uid, dbStatus, tanggalHariIni]);
+    const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus, tanggalHariIni]);
 
-    if (resultCek.rows.length > 0) {
+    if (resultCekStatus.rows.length > 0) {
+      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+    }
+
+    // 2. CEK KEDUA: Hitung total absensi siswa hari ini (Maksimal harus 2)
+    const queryHitungTotal HariIni = `
+      SELECT COUNT(*) as total FROM presensis
+      WHERE uid_tag = $1
+        AND created_at::date = $2::date;
+    `;
+    const resultHitung = await pool.query(queryHitungTotalHariIni, [uid, tanggalHariIni]);
+    const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
+
+    // Jika total data hari ini sudah 2 atau lebih, tolak secara mutlak
+    if (totalAbsenHariIni >= 2) {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
 
@@ -106,15 +120,12 @@ module.exports = async (req, res) => {
     const waktuString = `${jamLokal}:${menitLokal}`; 
 
     try {
-      // Insert teks murni tanpa casting ::status_absen
       const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
         VALUES ($1, $2, $3, $4);
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
     } catch (dbError) {
-      // Tingkat kedua: Jika tabrakan request dalam hitungan milidetik lolos dari kueri cek,
-      // Unique Index database akan menangkapnya dan melempar eror code 23505
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
@@ -122,9 +133,3 @@ module.exports = async (req, res) => {
     }
 
     return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
-
-  } catch (error) {
-    console.error("[ERROR] Sistem backend gagal:", error);
-    return res.status(500).json({ error: "SERVER_ERROR", message: error.message });
-  }
-};
