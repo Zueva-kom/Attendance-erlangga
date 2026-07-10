@@ -75,7 +75,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
     }
 
- // ========================================================
+// ========================================================
     // 3. PROSES CHECK & INSERT KE DATABASE (MAKS 2 KALI SEHARI)
     // ========================================================
     const tahun = targetTime.getUTCFullYear();
@@ -84,6 +84,7 @@ module.exports = async (req, res) => {
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
     // 1. CEK PERTAMA: Apakah siswa sudah pernah tap dengan status yang SAMA hari ini?
+    // (Mencegah IN dua kali atau OUT dua kali)
     const queryCekStatusSama = `
       SELECT uid_tag FROM presensis 
       WHERE uid_tag = $1 
@@ -97,8 +98,9 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
 
-    // 2. CEK KEDUA: Hitung total absensi siswa hari ini (Maksimal harus 2)
-    const queryHitungTotal HariIni = `
+    // 2. CEK KEDUA: Hitung total absensi siswa tersebut pada hari ini
+    // (Mencegah inputan ketiga, keempat, dst)
+    const queryHitungTotalHariIni = `
       SELECT COUNT(*) as total FROM presensis
       WHERE uid_tag = $1
         AND created_at::date = $2::date;
@@ -106,12 +108,12 @@ module.exports = async (req, res) => {
     const resultHitung = await pool.query(queryHitungTotalHariIni, [uid, tanggalHariIni]);
     const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
 
-    // Jika total data hari ini sudah 2 atau lebih, tolak secara mutlak
+    // Jika total baris data hari ini sudah mencapai 2 atau lebih, langsung tolak
     if (totalAbsenHariIni >= 2) {
       return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
     }
 
-    // Ambil id_kelas untuk insert
+    // Ambil id_kelas untuk insert data baru
     const resKelasSiswa = await pool.query(`SELECT id_kelas FROM siswas WHERE uid_tag = $1 LIMIT 1;`, [uid]);
     const idKelasSiswa = resKelasSiswa.rows[0].id_kelas;
 
@@ -126,6 +128,8 @@ module.exports = async (req, res) => {
       `;
       await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
     } catch (dbError) {
+      // Jika lolos dari cek kueri di atas karena request masuk berbarengan,
+      // Unique Index database akan menangkapnya dan melempar error code 23505
       if (dbError.code === '23505') {
         return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
       }
