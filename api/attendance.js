@@ -42,94 +42,75 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: "REJECTED", name: namaSiswa, message: "Salah Kelas" });
     }
 
-    // ========================================================
-    // 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN
-    // ========================================================
-    const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
-    const currentHour = targetTime.getUTCHours();
-    const currentMinute = targetTime.getUTCMinutes();
-    const totalMenitSekarang = (currentHour * 60) + currentMinute;
+// ========================================================
+// 2. LOGIKA WAKTU & VALIDASI JENDELA ABSEN (FIXED TIMEZONE)
+// ========================================================
+// Gunakan Intl.DateTimeFormat untuk mendapatkan waktu lokal Asia/Makassar secara akurat
+const opsiWaktu = { timeZone: 'Asia/Makassar', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', year: 'numeric', month: '2-digit', day: '2-digit' };
+const formatter = new Intl.DateTimeFormat('id-ID', opsiWaktu);
+const [{ value: tgl }, , { value: bln }, , { value: thn }, , { value: jam }, , { value: mnt }] = formatter.formatToParts(new Date());
 
-    let responStatusNodeMCU = ""; 
-    let dbStatus = "";            
-    let hitungDatabase = false;   
+const currentHour = parseInt(jam);
+const currentMinute = parseInt(mnt);
+const totalMenitSekarang = (currentHour * 60) + currentMinute;
+const tanggalHariIni = `${thn}-${bln}-${tgl}`; // Format: YYYY-MM-DD sesuai WITA
 
-    const m_06_00 = 6 * 60;
-    const m_07_15 = (7 * 60) + 15;
-    const m_14_30 = (14 * 60) + 30; 
-    const m_14_31 = (14 * 60) + 31; 
-    const m_19_00 = 19 * 60;        
+let responStatusNodeMCU = ""; 
+let dbStatus = "";            
+let hitungDatabase = false;   
 
-    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang <= m_14_30) {
-      responStatusNodeMCU = totalMenitSekarang < m_07_15 ? "MASUK" : "TERLAMBAT";
-      dbStatus = "IN"; 
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_14_31 && totalMenitSekarang < m_19_00) {
-      responStatusNodeMCU = "KELUAR";
-      dbStatus = "OUT"; 
-      hitungDatabase = true;
-    } 
+const m_06_00 = 6 * 60;
+const m_07_15 = (7 * 60) + 15;
+const m_14_30 = (14 * 60) + 30; 
+const m_14_31 = (14 * 60) + 31; 
+const m_19_00 = 19 * 60;        
 
-    if (!hitungDatabase) {
-      return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
-    }
+if (totalMenitSekarang >= m_06_00 && totalMenitSekarang <= m_14_30) {
+  responStatusNodeMCU = totalMenitSekarang < m_07_15 ? "MASUK" : "TERLAMBAT";
+  dbStatus = "IN"; 
+  hitungDatabase = true;
+} 
+else if (totalMenitSekarang >= m_14_31 && totalMenitSekarang < m_19_00) {
+  responStatusNodeMCU = "KELUAR";
+  dbStatus = "OUT"; 
+  hitungDatabase = true;
+} 
 
-    // ========================================================
-    // 3. PROSES CHECK & INSERT KE DATABASE (MAKS 2 KALI SEHARI)
-    // ========================================================
-    const tahun = targetTime.getUTCFullYear();
-    const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
-    const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
-    const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
+if (!hitungDatabase) {
+  return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
+}
 
-    // 1. CEK PERTAMA: Apakah siswa sudah pernah tap dengan status yang SAMA hari ini?
-    const queryCekStatusSama = `
-      SELECT uid_tag FROM presensis 
-      WHERE uid_tag = $1 
-        AND status = $2 
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
-      LIMIT 1;
-    `;
-    const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus, tanggalHariIni]);
+// ========================================================
+// 3. PROSES CHECK & INSERT KE DATABASE (ANTI-DUPLIKASI FIXED)
+// ========================================================
 
-    if (resultCekStatus.rows.length > 0) {
-      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-    }
+// 1. CEK PERTAMA: Apakah sudah tap dengan status yang SAMA hari ini?
+// Gunakan timezone server murni (atau cast langsung) agar pencocokan tanggal akurat
+const queryCekStatusSama = `
+  SELECT uid_tag FROM presensis 
+  WHERE uid_tag = $1 
+    AND status = $2 
+    AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $3::date
+  LIMIT 1;
+`;
+const resultCekStatus = await pool.query(queryCekStatusSama, [uid, dbStatus, tanggalHariIni]);
 
-    // 2. CEK KEDUA: Hitung total absensi siswa tersebut pada hari ini
-    const queryHitungTotalHariIni = `
-      SELECT COUNT(*) as total FROM presensis
-      WHERE uid_tag = $1
-        AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $2::date;
-    `;
-    const resultHitung = await pool.query(queryHitungTotalHariIni, [uid, tanggalHariIni]);
-    const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
+if (resultCekStatus.rows.length > 0) {
+  return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+}
 
-    if (totalAbsenHariIni >= 2) {
-      return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-    }
+// 2. CEK KEDUA: Jika ingin membatasi total tap harian max 2 kali (1 IN, 1 OUT)
+const queryHitungTotalHariIni = `
+  SELECT COUNT(*) as total FROM presensis
+  WHERE uid_tag = $1
+    AND (created_at AT TIME ZONE 'Asia/Makassar')::date = $2::date;
+`;
+const resultHitung = await pool.query(queryHitungTotalHariIni, [uid, tanggalHariIni]);
+const totalAbsenHariIni = parseInt(resultHitung.rows[0].total);
 
-    // Ambil id_kelas untuk insert data baru
-    const resKelasSiswa = await pool.query(`SELECT id_kelas FROM siswas WHERE uid_tag = $1 LIMIT 1;`, [uid]);
-    const idKelasSiswa = resKelasSiswa.rows[0].id_kelas;
-
-    const jamLokal = String(targetTime.getUTCHours()).padStart(2, '0');
-    const menitLokal = String(targetTime.getUTCMinutes()).padStart(2, '0');
-    const waktuString = `${jamLokal}:${menitLokal}`; 
-
-    try {
-      const queryInsert = `
-        INSERT INTO presensis (uid_tag, id_kelas, status, waktu) 
-        VALUES ($1, $2, $3, $4);
-      `;
-      await pool.query(queryInsert, [uid, idKelasSiswa, dbStatus, waktuString]);
-    } catch (dbError) {
-      if (dbError.code === '23505') {
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      }
-      throw dbError; 
-    }
+if (totalAbsenHariIni >= 2) {
+  return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
+}
 
     // --- BAGIAN 4 (RESPONS SUKSES) ---
     return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
