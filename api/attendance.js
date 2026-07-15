@@ -16,7 +16,8 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    const { device_id, uid } = req.body; 
+    // Tambahkan parameter opsional untuk manipulasi data demo
+    const { device_id, uid, waktu_demo, status_demo } = req.body; 
     if (!uid) return res.status(400).json({ error: 'Parameter UID tidak ditemukan.' });
 
     // ========================================================
@@ -43,53 +44,43 @@ module.exports = async (req, res) => {
     }
 
     // ========================================================
-    // 2. LOGIKA WAKTU JENDELA ABSEN
+    // 2. LOGIKA WAKTU JENDELA ABSEN (DIBEBASKAN UNTUK DEMO)
     // ========================================================
     const targetTime = new Date(new Date().getTime() + (8 * 60 * 60 * 1000)); 
     const currentHour = targetTime.getUTCHours();
     const currentMinute = targetTime.getUTCMinutes();
-    const totalMenitSekarang = (currentHour * 60) + currentMinute;
 
-    // Membuat string tanggal lokal (YYYY-MM-DD) untuk disimpan ke kolom baru
+    // Generate tanggal hari ini
     const tahun = targetTime.getUTCFullYear();
     const bulan = String(targetTime.getUTCMonth() + 1).padStart(2, '0');
     const tanggal = String(targetTime.getUTCDate()).padStart(2, '0');
     const tanggalHariIni = `${tahun}-${bulan}-${tanggal}`; 
 
-    let responStatusNodeMCU = ""; 
+    // Tentukan waktu (Gunakan waktu_demo jika dikirim, jika tidak gunakan waktu asli)
+    let waktuString = waktu_demo || `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
+
+    // Tentukan Status (Gunakan status_demo jika ada, atau otomatis berdasarkan jam)
     let dbStatus = "";            
-    let hitungDatabase = false;   
+    let responStatusNodeMCU = ""; 
 
-    const m_06_00 = 6 * 60;
-    const m_07_15 = (7 * 60) + 15;
-    const m_14_30 = (14 * 60) + 30; 
-    const m_14_31 = (14 * 60) + 31; 
-    const m_19_00 = 19 * 60;        
-
-    if (totalMenitSekarang >= m_06_00 && totalMenitSekarang <= m_14_30) {
-      responStatusNodeMCU = totalMenitSekarang < m_07_15 ? "MASUK" : "TERLAMBAT";
-      dbStatus = "IN"; 
-      hitungDatabase = true;
-    } 
-    else if (totalMenitSekarang >= m_14_31 && totalMenitSekarang < m_19_00) {
-      responStatusNodeMCU = "KELUAR";
-      dbStatus = "OUT"; 
-      hitungDatabase = true;
-    } 
-
-    if (!hitungDatabase) {
-      return res.status(200).json({ status: "DILUAR_JAM", name: namaSiswa });
+    if (status_demo) {
+      dbStatus = status_demo.toUpperCase(); // "IN" atau "OUT"
+      responStatusNodeMCU = dbStatus === "IN" ? "MASUK" : "KELUAR";
+    } else {
+      // Otomatisasi cerdas: Sebelum jam 12 siang dianggap masuk, setelahnya dianggap pulang
+      const jamUntukCek = parseInt(waktuString.split(':')[0]);
+      if (jamUntukCek < 12) {
+        dbStatus = "IN";
+        responStatusNodeMCU = jamUntukCek < 7 || (jamUntukCek === 7 && parseInt(waktuString.split(':')[1]) <= 15) ? "MASUK" : "TERLAMBAT";
+      } else {
+        dbStatus = "OUT";
+        responStatusNodeMCU = "KELUAR";
+      }
     }
 
-    const jamLokal = String(currentHour).padStart(2, '0');
-    const menitLokal = String(currentMinute).padStart(2, '0');
-    const waktuString = `${jamLokal}:${menitLokal}`; 
-
     // ========================================================
-    // 3. PROSES CEK DATA, INSERT ATAU UPDATE (BERDASARKAN KOLOM TANGGAL)
+    // 3. PROSES CEK DATA, INSERT ATAU UPDATE
     // ========================================================
-    
-    // Sekarang kita filter langsung menggunakan kolom 'tanggal' yang bertipe varchar
     const queryCekExist = `
       SELECT id FROM presensis 
       WHERE uid_tag = $1 
@@ -100,25 +91,29 @@ module.exports = async (req, res) => {
     const resultCek = await pool.query(queryCekExist, [uid, dbStatus, tanggalHariIni]);
 
     if (resultCek.rows.length > 0) {
-      // DATA SUDAH ADA HARI INI
       const idExisting = resultCek.rows[0].id;
 
       if (dbStatus === 'IN') {
-        // Jika statusnya 'IN' (Pagi), abaikan dan kunci (Kirim status SUDAH_ABSEN)
-        return res.status(200).json({ status: "SUDAH_ABSEN", name: namaSiswa });
-      } 
-      else if (dbStatus === 'OUT') {
-        // Jika statusnya 'OUT' (Pulang), lakukan UPDATE pada kolom waktu ke menit terbaru
-        const queryUpdate = `
+        // Biar gampang demo berulang kali, kita ijinkan UPDATE waktu masuknya jika di-tap lagi
+        const queryUpdateIn = `
           UPDATE presensis 
           SET waktu = $1, updated_at = NOW() 
           WHERE id = $2;
         `;
-        await pool.query(queryUpdate, [waktuString, idExisting]);
-        return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa });
+        await pool.query(queryUpdateIn, [waktuString, idExisting]);
+        return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa, message: "Waktu MASUK diperbarui (Demo Mode)" });
+      } 
+      else if (dbStatus === 'OUT') {
+        const queryUpdateOut = `
+          UPDATE presensis 
+          SET waktu = $1, updated_at = NOW() 
+          WHERE id = $2;
+        `;
+        await pool.query(queryUpdateOut, [waktuString, idExisting]);
+        return res.status(200).json({ status: responStatusNodeMCU, name: namaSiswa, message: "Waktu KELUAR diperbarui (Demo Mode)" });
       }
     } else {
-      // DATA BELUM ADA HARI INI -> LAKUKAN INSERT BARU (Jangan lupa masukkan variabel tanggalHariIni)
+      // DATA BELUM ADA -> INSERT BARU
       const queryInsert = `
         INSERT INTO presensis (uid_tag, id_kelas, status, waktu, tanggal) 
         VALUES ($1, $2, $3, $4, $5);
