@@ -5,33 +5,35 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecureBearSSL.h>
 
-// ===================== Definisi Pin (Sesuai Rangkaian Pin-to-Pin) =====================
+// ===================== Definisi Pin =====================
 #define SS_PIN    D4
 #define RST_PIN   D3   
 #define BUZZ_PIN  D8   // Pin D8 (GPIO15)
 
 // ===================== Konfigurasi WiFi =====================
-#define WIFI_SSID     "Nggonku"
-#define WIFI_PASSWORD "bantuanrakyatmiskinn"
+#define WIFI_SSID     "ITK-B.X"
+#define WIFI_PASSWORD "K@mpusM3rdeka!"
 
-// ===================== IDENTITAS MESIN ABSENSI =====================
-const String DEVICE_ID = "AKL";
-
-// URL API Vercel Dashboard
+// ===================== IDENTITAS MESIN =====================
+const String DEVICE_ID = "[KELAS]";
 String vercel_api_url = "https://attendance-erlangga.vercel.app/api/attendance";
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2); 
 
-// ===================== Fungsi Kirim JSON POST ke Vercel =====================
+// ===================== Variabel Marquee Standby (Tanpa Delay) =====================
+unsigned long timerScroll = 0;
+int posisiScroll = 0;
+bool modeStandby = false; 
+// Tambahkan banyak spasi di belakang agar teks mengulang dengan halus
+String teksStandby = "Presensi " + DEVICE_ID + "        "; 
+
+// ===================== Fungsi Kirim API =====================
 String sendJsonToVercel(String uid) {
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
     delay(3000);
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("ERROR: WiFi tidak terhubung");
-      return "WiFi Gagal!";  
-    }
+    if (WiFi.status() != WL_CONNECTED) return "WiFi Gagal!";  
   }
 
   std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
@@ -41,14 +43,11 @@ String sendJsonToVercel(String uid) {
   String response = "Kirim Gagal!";
 
   if (https.begin(*client, vercel_api_url)) {
-    https.setTimeout(8000); // Batas waktu tunggu respon 8 detik
+    https.setTimeout(8000); 
     https.addHeader("Content-Type", "application/json");
 
     String jsonPayload = "{\"device_id\":\"" + DEVICE_ID + "\",\"uid\":\"" + uid + "\"}";
-    Serial.println("Kirim Payload: " + jsonPayload);
-
     int httpCode = https.POST(jsonPayload);
-    Serial.println("HTTP Code dari Vercel: " + String(httpCode));
 
     if (httpCode > 0) {
       response = https.getString();
@@ -57,58 +56,69 @@ String sendJsonToVercel(String uid) {
       response = "HTTP_ERR_" + String(httpCode);
     }
     https.end();
-  } else {
-    Serial.println("ERROR: Gagal membuka koneksi HTTPS");
   }
-
   return response;
 }
 
-// ===================== Indikator Suara (Buzzer) =====================
-void buzzerSukses() {
-  tone(BUZZ_PIN, 4000); delay(150); noTone(BUZZ_PIN);
-}
+// ===================== Indikator Suara =====================
+void buzzerSukses() { tone(BUZZ_PIN, 4000); delay(150); noTone(BUZZ_PIN); }
+void buzzerDitolak() { tone(BUZZ_PIN, 600); delay(800); noTone(BUZZ_PIN); }
+void buzzerError() { tone(BUZZ_PIN, 500); delay(300); noTone(BUZZ_PIN); delay(100); tone(BUZZ_PIN, 500); delay(300); noTone(BUZZ_PIN); }
 
-void buzzerDitolak() {
-  tone(BUZZ_PIN, 600); delay(800); noTone(BUZZ_PIN);
-}
-
-void buzzerError() {
-  tone(BUZZ_PIN, 500); delay(300); noTone(BUZZ_PIN); delay(100);
-  tone(BUZZ_PIN, 500); delay(300); noTone(BUZZ_PIN);
-}
-
-void tampilkanStandby() {
+// ===================== Fungsi Standby Baru =====================
+void masukModeStandby() {
   lcd.clear();
-  lcd.setCursor(0, 0); lcd.print("Presensi " + DEVICE_ID);
-  lcd.setCursor(0, 1); lcd.print("Silahkan Tap...");
+  lcd.setCursor(0, 1); 
+  lcd.print("Silahkan Tap..."); // Baris bawah diam
+  
+  modeStandby = true;   // Aktifkan animasi teks baris atas
+  posisiScroll = 0;
+  timerScroll = millis();
 }
 
-// ===================== Parsing JSON Sederhana via String =====================
+// ===================== Parsing JSON =====================
 String ambilNilaiJson(String json, String key) {
   String target = "\"" + key + "\":\"";
   int index = json.indexOf(target);
   if (index == -1) return "";
   int startPos = index + target.length();
   int endPos = json.indexOf("\"", startPos);
-  if (endPos != -1) {
-    return json.substring(startPos, endPos);
-  }
+  if (endPos != -1) return json.substring(startPos, endPos);
   return "";
 }
 
-// ===================== Setup Perangkat =====================
+// ===================== Fungsi Teks Berjalan (Untuk Nama) =====================
+void tampilkanPesanBerjalan(String baris1, String baris2) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(baris1); 
+
+  if (baris2.length() <= 16) {
+    lcd.setCursor(0, 1);
+    lcd.print(baris2);
+    delay(3500); 
+  } else {
+    String paddedText = baris2 + "                "; 
+    for (int posisi = 0; posisi <= paddedText.length() - 16; posisi++) {
+      lcd.setCursor(0, 1);
+      lcd.print(paddedText.substring(posisi, posisi + 16));
+      delay(300); 
+    }
+    delay(500); 
+  }
+}
+
+// ===================== Setup =====================
 void setup() {
   Serial.begin(115200);
-  
   pinMode(BUZZ_PIN, OUTPUT);
   digitalWrite(BUZZ_PIN, LOW);
 
   SPI.begin();
   rfid.PCD_Init();
-
   lcd.init();
   lcd.backlight();
+  
   lcd.clear();
   buzzerSukses();
   lcd.setCursor(0, 0); lcd.print("Memulai Sistem...");
@@ -129,8 +139,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     lcd.setCursor(0, 0); lcd.print("WiFi Terhubung!");
     lcd.setCursor(0, 1); lcd.print(WiFi.localIP().toString());
-    buzzerSukses();
-    buzzerSukses();
+    buzzerSukses(); buzzerSukses();
   } else {
     lcd.setCursor(0, 0); lcd.print("WiFi Gagal!");
     lcd.setCursor(0, 1); lcd.print("Mode Offline...");
@@ -138,12 +147,31 @@ void setup() {
   }
 
   delay(2000);
-  tampilkanStandby();
+  masukModeStandby(); // Panggil fungsi standby baru
 }
 
 // ===================== Main Loop =====================
 void loop() {
+
+  // --- EFEK TEKS BERJALAN SAAT STANDBY (TANPA DELAY AGAR RFID TIDAK LAG) ---
+  if (modeStandby) {
+    if (millis() - timerScroll >= 350) { // 350ms adalah kecepatan gerak teks
+      timerScroll = millis();
+      lcd.setCursor(0, 0);
+      
+      // Menampilkan 16 huruf sesuai posisi scroll
+      lcd.print(teksStandby.substring(posisiScroll, posisiScroll + 16));
+      
+      posisiScroll++;
+      if (posisiScroll > teksStandby.length() - 16) {
+        posisiScroll = 0; // Ulangi dari awal jika sudah di ujung
+      }
+    }
+  }
+
+  // --- LOGIKA BACA KARTU RFID ---
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+    modeStandby = false; // Matikan animasi standby saat memproses kartu
     buzzerSukses();
     
     String uidString = "";
@@ -152,64 +180,51 @@ void loop() {
       uidString += String(rfid.uid.uidByte[i], HEX);
     }
     uidString.toUpperCase();
-    Serial.println("\nUID Terbaca: " + uidString);
 
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Verifikasi...");
 
     String result = sendJsonToVercel(uidString);
-    Serial.println("Respon Server Backend: " + result);
 
-    lcd.clear();
-    
     if (result != "Kirim Gagal!" && !result.startsWith("HTTP_ERR_")) {
-      
       String statusAbsen = ambilNilaiJson(result, "status");
       String namaUser    = ambilNilaiJson(result, "name");
       String pesanError  = ambilNilaiJson(result, "message");
 
-      if (namaUser.length() > 16) namaUser = namaUser.substring(0, 16);
-
-      // --- LOGIKA RESPON TAMPILAN & AUDIO ---
       if (statusAbsen == "REJECTED") {
-        lcd.setCursor(0, 0); lcd.print("AKSES DITOLAK!"); 
-        lcd.setCursor(0, 1); lcd.print(pesanError != "" ? pesanError : "Salah Kelas");
         buzzerDitolak(); 
+        String pesan = (pesanError != "") ? pesanError : "Salah Kelas";
+        tampilkanPesanBerjalan("AKSES DITOLAK!", pesan);
       } 
       else if (statusAbsen == "MASUK") { 
-        lcd.setCursor(0, 0); lcd.print("Absen Berhasil!");
-        lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
+        tampilkanPesanBerjalan("Absen Berhasil!", namaUser);
       } 
       else if (statusAbsen == "KELUAR") {
-        lcd.setCursor(0, 0); lcd.print(namaUser);
-        lcd.setCursor(0, 1); lcd.print("Selamat pulang");
         buzzerSukses();
+        tampilkanPesanBerjalan("Selamat pulang", namaUser);
       }
       else if (statusAbsen == "TERLAMBAT") {
-        lcd.setCursor(0, 0); lcd.print("Tercatat Telat!");
-        lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
+        tampilkanPesanBerjalan("Tercatat Telat!", namaUser);
       }
       else if (statusAbsen == "SUDAH_ABSEN") {
-        lcd.setCursor(0, 0); lcd.print("Sudah Absen!");
-        lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses(); 
+        tampilkanPesanBerjalan("Sudah Absen!", namaUser);
       }
       else {
-        lcd.setCursor(0, 0); lcd.print("Diluar Jam Ops");
-        lcd.setCursor(0, 1); lcd.print(namaUser);
         buzzerSukses();
+        tampilkanPesanBerjalan("Diluar Jam Ops", namaUser);
       }
-
     } else {
+      lcd.clear();
       lcd.setCursor(0, 0); lcd.print("Gagal Koneksi");
       lcd.setCursor(0, 1); lcd.print("Hubungi Admin");
       buzzerError();
+      delay(3000);
     }
 
-    delay(3500);
-    tampilkanStandby();
+    masukModeStandby(); // Kembali ke tampilan Standby dan nyalakan lagi animasinya
 
     rfid.PICC_HaltA();
     rfid.PCD_StopCrypto1();
