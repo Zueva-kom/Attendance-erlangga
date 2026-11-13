@@ -3,7 +3,6 @@
 #include <LiquidCrystal_I2C.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClientSecureBearSSL.h>
 
 // ===================== Definisi Pin =====================
 #define SS_PIN    D4
@@ -15,8 +14,8 @@
 #define WIFI_PASSWORD "K@mpusM3rdeka!"
 
 // ===================== IDENTITAS MESIN =====================
-const String DEVICE_ID = "[KELAS]";
-String vercel_api_url = "https://attendance-erlangga.vercel.app/api/attendance";
+const String DEVICE_ID = "XI TJKT"; // Sesuaikan dengan nama_kelas di database
+String local_api_url = "http://10.160.21.135:8000/api/attendance";
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2); 
@@ -28,7 +27,7 @@ bool modeStandby = false;
 // Tambahkan banyak spasi di belakang agar teks mengulang dengan halus
 String teksStandby = "Presensi " + DEVICE_ID + "        "; 
 
-// ===================== Fungsi Kirim API =====================
+// ===================== Fungsi Kirim API Lokal =====================
 String sendJsonToVercel(String uid) {
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
@@ -36,26 +35,25 @@ String sendJsonToVercel(String uid) {
     if (WiFi.status() != WL_CONNECTED) return "WiFi Gagal!";  
   }
 
-  std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
-  client->setInsecure(); 
-
-  HTTPClient https;
+  WiFiClient client; // Gunakan WiFiClient standar untuk HTTP Lokal
+  HTTPClient http;
   String response = "Kirim Gagal!";
 
-  if (https.begin(*client, vercel_api_url)) {
-    https.setTimeout(8000); 
-    https.addHeader("Content-Type", "application/json");
+  if (http.begin(client, local_api_url)) {
+    http.setTimeout(5000); 
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Accept", "application/json");
 
     String jsonPayload = "{\"device_id\":\"" + DEVICE_ID + "\",\"uid\":\"" + uid + "\"}";
-    int httpCode = https.POST(jsonPayload);
+    int httpCode = http.POST(jsonPayload);
 
     if (httpCode > 0) {
-      response = https.getString();
+      response = http.getString();
       response.trim();
     } else {
       response = "HTTP_ERR_" + String(httpCode);
     }
-    https.end();
+    http.end();
   }
   return response;
 }
@@ -111,6 +109,8 @@ void tampilkanPesanBerjalan(String baris1, String baris2) {
 // ===================== Setup =====================
 void setup() {
   Serial.begin(115200);
+  Serial.println("\n--- Sistem Presensi Dimulai ---");
+  delay(100);
   pinMode(BUZZ_PIN, OUTPUT);
   digitalWrite(BUZZ_PIN, LOW);
 
@@ -171,7 +171,7 @@ void loop() {
 
   // --- LOGIKA BACA KARTU RFID ---
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
-    modeStandby = false; // Matikan animasi standby saat memproses kartu
+    modeStandby = false;
     buzzerSukses();
     
     String uidString = "";
@@ -181,21 +181,30 @@ void loop() {
     }
     uidString.toUpperCase();
 
+    Serial.println("\n[RFID] Kartu terdeteksi!");
+    Serial.println("[RFID] UID: " + uidString);
+    Serial.println("[HTTP] Menghubungi: " + local_api_url);
+
     lcd.clear();
     lcd.setCursor(0, 0); lcd.print("Verifikasi...");
 
     String result = sendJsonToVercel(uidString);
+
+    Serial.println("[HTTP] Respon: " + result);
 
     if (result != "Kirim Gagal!" && !result.startsWith("HTTP_ERR_")) {
       String statusAbsen = ambilNilaiJson(result, "status");
       String namaUser    = ambilNilaiJson(result, "name");
       String pesanError  = ambilNilaiJson(result, "message");
 
+      Serial.println("[HASIL] Status: " + statusAbsen + " | Nama: " + namaUser);
+
       if (statusAbsen == "REJECTED") {
         buzzerDitolak(); 
         String pesan = (pesanError != "") ? pesanError : "Salah Kelas";
         tampilkanPesanBerjalan("AKSES DITOLAK!", pesan);
       } 
+      // ... lanjutkan blok if-else bawaan Anda
       else if (statusAbsen == "MASUK") { 
         buzzerSukses();
         tampilkanPesanBerjalan("Absen Berhasil!", namaUser);
